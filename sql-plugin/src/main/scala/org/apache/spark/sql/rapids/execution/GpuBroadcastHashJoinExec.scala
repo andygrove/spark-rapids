@@ -25,7 +25,8 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.{BroadcastDistribution, Distribution, UnspecifiedDistribution}
 import org.apache.spark.sql.execution.{BinaryExecNode, SparkPlan}
-import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ReusedExchangeExec}
 import org.apache.spark.sql.execution.joins._
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -54,13 +55,13 @@ class GpuBroadcastHashJoinMeta(
       case BuildRight => childPlans(1)
     }
 
-    if (!buildSide.canThisBeReplaced) {
-      willNotWorkOnGpu("the broadcast for this join must be on the GPU too")
-    }
-
-    if (!canThisBeReplaced) {
-      buildSide.willNotWorkOnGpu("the BroadcastHashJoin this feeds is not on the GPU")
-    }
+//    if (!buildSide.canThisBeReplaced) {
+//      willNotWorkOnGpu("the broadcast for this join must be on the GPU too")
+//    }
+//
+//    if (!canThisBeReplaced) {
+//      buildSide.willNotWorkOnGpu("the BroadcastHashJoin this feeds is not on the GPU")
+//    }
   }
 
   override def convertToGpu(): GpuExec = {
@@ -71,9 +72,9 @@ class GpuBroadcastHashJoinMeta(
       case BuildLeft => left
       case BuildRight => right
     }
-    if (!buildSide.isInstanceOf[GpuBroadcastExchangeExec]) {
-      throw new IllegalStateException("the broadcast must be on the GPU too")
-    }
+//    if (!buildSide.isInstanceOf[GpuBroadcastExchangeExec]) {
+//      throw new IllegalStateException("the broadcast must be on the GPU too")
+//    }
     GpuBroadcastHashJoinExec(
       leftKeys.map(_.convertToGpu()),
       rightKeys.map(_.convertToGpu()),
@@ -108,6 +109,7 @@ case class GpuBroadcastHashJoinExec(
   }
 
   def broadcastExchange: GpuBroadcastExchangeExec = buildPlan match {
+    case BroadcastQueryStageExec(_, gpu: GpuBroadcastExchangeExec) => gpu
     case gpu: GpuBroadcastExchangeExec => gpu
     case reused: ReusedExchangeExec => reused.child.asInstanceOf[GpuBroadcastExchangeExec]
   }

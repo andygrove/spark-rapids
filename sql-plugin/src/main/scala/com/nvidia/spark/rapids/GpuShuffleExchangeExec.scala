@@ -19,8 +19,8 @@ package com.nvidia.spark.rapids
 import scala.collection.AbstractIterator
 
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
-
 import org.apache.spark.ShuffleDependency
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.sql.catalyst.InternalRow
@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.errors._
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec, ShuffleExchangeExecLike}
 import org.apache.spark.sql.execution.metric._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids.GpuShuffleDependency
@@ -60,7 +60,11 @@ class GpuShuffleMeta(
 case class GpuShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
-    canChangeNumPartitions: Boolean = true) extends Exchange with GpuExec {
+    canChangeNumPartitions: Boolean = true) extends Exchange
+    with GpuExec with ShuffleExchangeExecLike {
+
+
+//  override def withChild(newChild: SparkPlan): SparkPlan = this.copy(child = newChild)
 
   /**
    * Lots of small output batches we want to group together.

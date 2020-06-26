@@ -28,15 +28,15 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.GpuMetricNames._
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
-
 import org.apache.spark.{broadcast, SparkException}
+
 import org.apache.spark.launcher.SparkLauncher
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.{BroadcastMode, BroadcastPartitioning, Partitioning}
 import org.apache.spark.sql.execution.{SparkPlan, SQLExecution}
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, Exchange}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, BroadcastExchangeExecLike, Exchange}
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
@@ -202,10 +202,10 @@ class GpuBroadcastMeta(
     if (!TrampolineUtil.isHashedRelation(exchange.mode)) {
       willNotWorkOnGpu("Broadcast exchange is only supported for HashedJoin")
     }
-    if (!parent.exists(_.wrapped.isInstanceOf[BroadcastHashJoinExec])) {
-      willNotWorkOnGpu("BroadcastExchange only works on the GPU if being used " +
-        "with a GPU version of BroadcastHashJoinExec")
-    }
+//    if (parent != null && !parent.exists(_.wrapped.isInstanceOf[BroadcastHashJoinExec])) {
+//      willNotWorkOnGpu("BroadcastExchange only works on the GPU if being used " +
+//        "with a GPU version of BroadcastHashJoinExec")
+//    }
   }
 
   override def convertToGpu(): GpuExec =
@@ -214,7 +214,11 @@ class GpuBroadcastMeta(
 
 case class GpuBroadcastExchangeExec(
     mode: BroadcastMode,
-    child: SparkPlan) extends Exchange with GpuExec {
+    child: SparkPlan) extends Exchange with GpuExec with BroadcastExchangeExecLike {
+
+
+  override def asExchange(): Exchange = this
+//  override def withChild(newChild: SparkPlan): SparkPlan = this.copy(child = newChild)
 
   override lazy val additionalMetrics = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),

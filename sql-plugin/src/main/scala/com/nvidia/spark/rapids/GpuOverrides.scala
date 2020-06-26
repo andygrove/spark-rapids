@@ -1740,6 +1740,7 @@ case class GpuOverrides() extends Rule[SparkPlan] with Logging {
   override def apply(plan: SparkPlan) :SparkPlan = {
     val conf = new RapidsConf(plan.conf)
     if (conf.isSqlEnabled) {
+      println(s"GpuOverrides: BEFORE:\n$plan")
       val wrap = GpuOverrides.wrapPlan(plan, conf, None)
       wrap.tagForGpu()
       wrap.runAfterTagRules()
@@ -1748,7 +1749,9 @@ case class GpuOverrides() extends Rule[SparkPlan] with Logging {
         logWarning(s"\n${wrap.explain(exp.equalsIgnoreCase("ALL"))}")
       }
       val convertedPlan = wrap.convertIfNeeded()
-      addSortsIfNeeded(convertedPlan, conf)
+      val x = addSortsIfNeeded(convertedPlan, conf)
+      println(s"GpuOverrides: AFTER:\n$x")
+      x
     } else {
       plan
     }
@@ -1793,4 +1796,5 @@ case class GpuOverrides() extends Rule[SparkPlan] with Logging {
         ensureOrdering(operator, conf)
     }
   }
+
 }

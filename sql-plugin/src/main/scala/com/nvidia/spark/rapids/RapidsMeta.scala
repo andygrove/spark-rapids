@@ -119,8 +119,10 @@ abstract class RapidsMeta[INPUT <: BASE, BASE, OUTPUT <: BASE](
    * Call this to indicate that this should not be replaced with a GPU enabled version
    * @param because why it should not be replaced.
    */
-  final def willNotWorkOnGpu(because: String): Unit =
+  final def willNotWorkOnGpu(because: String): Unit = {
+    println(because)
     cannotBeReplacedReasons.get.add(because)
+  }
 
   final def shouldBeRemoved(because: String): Unit =
     shouldBeRemovedReasons.get.add(because)

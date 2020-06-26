@@ -20,7 +20,7 @@ import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Attribut
 import org.apache.spark.sql.catalyst.expressions.objects.CreateExternalRow
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, CustomShuffleReaderExec, QueryStageExec}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, BroadcastQueryStageExec, CustomShuffleReaderExec, QueryStageExec}
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
@@ -34,13 +34,19 @@ import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
-  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = plan match {
-    case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
-      GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
-    case ColumnarToRowExec(bb: GpuBringBackToHost) =>
-      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
-    case p =>
-      p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
+    plan match {
+      case HostColumnarToGpu(b: BroadcastQueryStageExec, _) =>
+        optimizeGpuPlanTransitions(b)
+      case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+      case ColumnarToRowExec(bb: GpuBringBackToHost) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
+      case ColumnarToRowExec(bb: GpuExec) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
+      case p =>
+        p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+    }
   }
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
@@ -151,7 +157,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    */
   private def insertColumnarFromGpu(plan: SparkPlan): SparkPlan = {
     if (plan.supportsColumnar && plan.isInstanceOf[GpuExec]) {
-      GpuBringBackToHost(insertColumnarToGpu(plan))
+      /*GpuBringBackToHost(*/insertColumnarToGpu(plan)/*)*/
     } else {
       plan.withNewChildren(plan.children.map(insertColumnarFromGpu))
     }
@@ -269,6 +275,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   override def apply(plan: SparkPlan): SparkPlan = {
     this.conf = new RapidsConf(plan.conf)
     if (conf.isSqlEnabled) {
+      println(s"GpuTransitionOverrides: BEFORE:\n$plan")
       var updatedPlan = insertHashOptimizeSorts(plan)
       updatedPlan = insertCoalesce(insertColumnarFromGpu(updatedPlan))
       updatedPlan = optimizeCoalesce(optimizeGpuPlanTransitions(updatedPlan))
@@ -278,6 +285,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       if (conf.isTestEnabled) {
         assertIsOnTheGpu(updatedPlan, conf)
       }
+      println(s"GpuTransitionOverrides: AFTER:\n$updatedPlan")
       updatedPlan
     } else {
       plan
