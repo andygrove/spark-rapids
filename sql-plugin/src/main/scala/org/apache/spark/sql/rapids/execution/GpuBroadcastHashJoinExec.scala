@@ -110,6 +110,8 @@ case class GpuBroadcastHashJoinExec(
 
   def broadcastExchange: GpuBroadcastExchangeExec = buildPlan match {
     case BroadcastQueryStageExec(_, gpu: GpuBroadcastExchangeExec) => gpu
+    case BroadcastQueryStageExec(_, reused: ReusedExchangeExec) =>
+      reused.child.asInstanceOf[GpuBroadcastExchangeExec]
     case gpu: GpuBroadcastExchangeExec => gpu
     case reused: ReusedExchangeExec => reused.child.asInstanceOf[GpuBroadcastExchangeExec]
   }

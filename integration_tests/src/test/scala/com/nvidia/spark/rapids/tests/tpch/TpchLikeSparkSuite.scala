@@ -128,95 +128,95 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
     }
   }
 
-  testTpchLike("Something like TPCH Query 1", 4) {
-    session => Q1Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 2", 1) {
-    session => {
-      // this test fails when AQE is enabled - https://github.com/NVIDIA/spark-rapids/issues/275
-      assume(!adaptiveQueryEnabled)
-      Q2Like(session)
-    }
-  }
-
-  testTpchLike("Something like TPCH Query 3", 3) {
-    session => Q3Like(session)
-  }
+//  testTpchLike("Something like TPCH Query 1", 4) {
+//    session => Q1Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 2", 1) {
+//    session => {
+//      // this test fails when AQE is enabled - https://github.com/NVIDIA/spark-rapids/issues/275
+//      assume(!adaptiveQueryEnabled)
+//      Q2Like(session)
+//    }
+//  }
+//
+//  testTpchLike("Something like TPCH Query 3", 3) {
+//    session => Q3Like(session)
+//  }
 
   testTpchLike("Something like TPCH Query 4", 5) {
     session => Q4Like(session)
   }
 
-  testTpchLike("Something like TPCH Query 5", 1) {
-    session => Q5Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 6", 1) {
-    session => Q6Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 7", 0) {
-    session => Q7Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 8", 0) {
-    session => Q8Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 9", 5) {
-    session => Q9Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 10", 4) {
-    session => Q10Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 11", 47) {
-    session => Q11Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 12", 2) {
-    session => Q12Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 13", 6) {
-    session => Q13Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 14", 1) {
-    session => Q14Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 15", 1) {
-    session => Q15Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 16", 42) {
-    session => Q16Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 17", 1) {
-    session => Q17Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 18", 0) {
-    session => Q18Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 19", 1) {
-    session => Q19Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 20", 0) {
-    session => Q20Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 21", 0) {
-    session => Q21Like(session)
-  }
-
-  testTpchLike("Something like TPCH Query 22", 7) {
-    session => Q22Like(session)
-  }
+//  testTpchLike("Something like TPCH Query 5", 1) {
+//    session => Q5Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 6", 1) {
+//    session => Q6Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 7", 0) {
+//    session => Q7Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 8", 0) {
+//    session => Q8Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 9", 5) {
+//    session => Q9Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 10", 4) {
+//    session => Q10Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 11", 47) {
+//    session => Q11Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 12", 2) {
+//    session => Q12Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 13", 6) {
+//    session => Q13Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 14", 1) {
+//    session => Q14Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 15", 1) {
+//    session => Q15Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 16", 42) {
+//    session => Q16Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 17", 1) {
+//    session => Q17Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 18", 0) {
+//    session => Q18Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 19", 1) {
+//    session => Q19Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 20", 0) {
+//    session => Q20Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 21", 0) {
+//    session => Q21Like(session)
+//  }
+//
+//  testTpchLike("Something like TPCH Query 22", 7) {
+//    session => Q22Like(session)
+//  }
 }
