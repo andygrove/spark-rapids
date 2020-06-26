@@ -39,10 +39,27 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     println(s"optimizeGpuPlanTransitions: ${plan.getClass.getSimpleName}" +
         s"(${plan.children.headOption.map(_.getClass.getSimpleName)})")
     val x = plan match {
+
+      case WholeStageCodegenExec(InputAdapter(b)) =>
+        optimizeGpuPlanTransitions(b)
+      case WholeStageCodegenExec(b) =>
+        optimizeGpuPlanTransitions(b)
+      case InputAdapter(b) =>
+        optimizeGpuPlanTransitions(b)
+
       case HostColumnarToGpu(b: QueryStageExec, _) =>
         optimizeGpuPlanTransitions(b)
+      case HostColumnarToGpu(RowToColumnarExec(r2c: RowToColumnarExec), goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
         GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+
+      case RowToColumnarExec(RowToColumnarExec(b)) =>
+        RowToColumnarExec(optimizeGpuPlanTransitions(b))
+      case GpuRowToColumnarExec(RowToColumnarExec(b), goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(b), goal)
+      case GpuRowToColumnarExec(GpuRowToColumnarExec(b, _), goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(b), goal)
 
       case ColumnarToRowExec(b: BroadcastExchangeExec) =>
         GpuColumnarToRowExec(optimizeGpuPlanTransitions(b))
@@ -201,11 +218,18 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    * Inserts a transition to be running on the GPU from CPU columnar
    */
   private def insertColumnarToGpu(plan: SparkPlan): SparkPlan = {
-    if (plan.supportsColumnar && !plan.isInstanceOf[GpuExec]) {
-      HostColumnarToGpu(insertColumnarFromGpu(plan), TargetSize(conf.gpuTargetBatchSizeBytes))
-    } else {
-      plan.withNewChildren(plan.children.map(insertColumnarToGpu))
+    plan match {
+      case _: QueryStageExec =>
+        plan.withNewChildren(plan.children.map(insertColumnarToGpu))
+      case _ =>
+        if (plan.supportsColumnar && !plan.isInstanceOf[GpuExec]) {
+          HostColumnarToGpu(insertColumnarFromGpu(plan), TargetSize(conf.gpuTargetBatchSizeBytes))
+        } else {
+          plan.withNewChildren(plan.children.map(insertColumnarToGpu))
+        }
     }
+
+
   }
 
   private def insertHashOptimizeSorts(plan: SparkPlan): SparkPlan = {

@@ -18,22 +18,22 @@ package com.nvidia.spark.rapids
 
 import ai.rapids.cudf.NvtxColor
 import com.nvidia.spark.rapids.GpuMetricNames._
-
 import org.apache.spark.TaskContext
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, UnsafeProjection}
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{CodegenSupport, SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{CodegenSupport, ColumnarToRowExecLike, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.rapids.execution.GpuColumnToRowMapPartitionsRDD
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 
 case class GpuColumnarToRowExec(child: SparkPlan, exportColumnarRdd: Boolean = false) 
-    extends UnaryExecNode with CodegenSupport with GpuExec {
+    extends UnaryExecNode with CodegenSupport with GpuExec with ColumnarToRowExecLike {
   // We need to do this so the assertions don't fail
   override def supportsColumnar = false
 

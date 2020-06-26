@@ -20,14 +20,14 @@ import ai.rapids.cudf.NvtxColor
 import com.nvidia.spark.rapids.GpuColumnVector.GpuColumnarBatchBuilder
 import com.nvidia.spark.rapids.GpuMetricNames._
 import com.nvidia.spark.rapids.GpuRowToColumnConverter.{FixedWidthTypeConverter, VariableWidthTypeConverter}
-
 import org.apache.spark.TaskContext
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, SpecializedGetters}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{RowToColumnarExecLike, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.rapids.execution.TrampolineUtil
 import org.apache.spark.sql.types._
@@ -461,7 +461,9 @@ class RowToColumnarIterator(
  * GPU version of row to columnar transition.
  */
 case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceGoal)
-  extends UnaryExecNode with GpuExec {
+  extends UnaryExecNode with GpuExec with RowToColumnarExecLike {
+
+  assert(!child.isInstanceOf[GpuRowToColumnarExec])
 
   override def output: Seq[Attribute] = child.output
 
