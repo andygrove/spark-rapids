@@ -17,9 +17,10 @@
 package com.nvidia.spark.rapids
 
 import scala.collection.AbstractIterator
+import scala.concurrent.Future
 
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
-import org.apache.spark.ShuffleDependency
+import org.apache.spark.{MapOutputStatistics, ShuffleDependency}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -73,13 +74,27 @@ case class GpuShuffleExchangeExec(
 
   private lazy val writeMetrics =
     SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext)
-  private lazy val readMetrics =
+  /*private*/ lazy val readMetrics =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val additionalMetrics : Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size")
   ) ++ readMetrics ++ writeMetrics
 
   override def nodeName: String = "GpuColumnarExchange"
+
+  // 'mapOutputStatisticsFuture' is only needed when enable AQE.
+  @transient lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
+    if (inputBatchRDD.getNumPartitions == 0) {
+      Future.successful(null)
+    } else {
+      sparkContext.submitMapStage(shuffleDependencyColumnar)
+    }
+  }
+
+  override def asExchange(): Exchange = this
+
+  override def shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] =
+    throw new IllegalStateException()
 
   private val serializer: Serializer =
     new GpuColumnarBatchSerializer(child.output.size, longMetric("dataSize"))
@@ -92,7 +107,7 @@ case class GpuShuffleExchangeExec(
    * the returned ShuffleDependency will be the input of shuffle.
    */
   @transient
-  lazy val shuffleBatchDependency : ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+  lazy val shuffleDependencyColumnar: ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
     GpuShuffleExchangeExec.prepareBatchShuffleDependency(
       inputBatchRDD,
       child.output,
@@ -100,10 +115,6 @@ case class GpuShuffleExchangeExec(
       serializer,
       metrics,
       writeMetrics)
-  }
-
-  def createShuffledBatchRDD(partitionStartIndices: Option[Array[Int]]): ShuffledBatchRDD = {
-    new ShuffledBatchRDD(shuffleBatchDependency, metrics ++ readMetrics, partitionStartIndices)
   }
 
   /**
@@ -114,10 +125,10 @@ case class GpuShuffleExchangeExec(
   protected override def doExecute(): RDD[InternalRow] =
     throw new IllegalStateException(s"Row-based execution should not occur for $this")
 
-  protected override def doExecuteColumnar(): RDD[ColumnarBatch] = attachTree(this, "execute") {
+  override def doExecuteColumnar(): RDD[ColumnarBatch] = attachTree(this, "execute") {
     // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
     if (cachedShuffleRDD == null) {
-      cachedShuffleRDD = createShuffledBatchRDD(None)
+      cachedShuffleRDD = new ShuffledBatchRDD(shuffleDependencyColumnar, metrics ++ readMetrics)
     }
     cachedShuffleRDD
   }
