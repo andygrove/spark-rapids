@@ -44,8 +44,6 @@ case class GpuCustomShuffleReaderExec(
     partitionSpecs: Seq[ShufflePartitionSpec],
     description: String) extends UnaryExecNode with GpuExec with CustomShuffleReaderExecLike {
 
-  override def supportsColumnar: Boolean = true
-
   override lazy val additionalMetrics: Map[String, SQLMetric] = Map(
     TOTAL_TIME -> SQLMetrics.createNanoTimingMetric(sparkContext, DESCRIPTION_TOTAL_TIME),
   )
