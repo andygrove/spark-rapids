@@ -44,22 +44,11 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     case ColumnarToRowExec(bb: GpuExec) =>
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
 
-    // EnsureRequirements may have inserted a CPU broadcast in between two GPU operators
+    // EnsureRequirements may have inserted a CPU exchange in between two GPU operators
     case b: BroadcastExchangeExec if b.child.supportsColumnar =>
       b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
-
-    // EnsureRequirements may have inserted a CPU shuffle in between two GPU operators
-    case s: ShuffleExchangeExec if s.child.supportsColumnar =>
-      val p = s.outputPartitioning match {
-        case SinglePartition => GpuSinglePartitioning(Seq.empty)
-        case HashPartitioning(expressions, numPartitions) =>
-        val x: Seq[Expression] = expressions
-            .map(e => GpuOverrides.wrapExpr(e, conf, None)
-                .convertToGpu())
-          GpuHashPartitioning(x, numPartitions)
-      }
-      GpuShuffleExchangeExec(p, optimizeGpuPlanTransitions(s.child),
-        s.canChangeNumPartitions)
+    case b: ShuffleExchangeExec if b.child.supportsColumnar =>
+      b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
 
     // TODO this seems hacky .. would be better to prevent this happening in the first place
     case a: HashAggregateExec if a.child.supportsColumnar =>
@@ -315,7 +304,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   override def apply(plan: SparkPlan): SparkPlan = {
     this.conf = new RapidsConf(plan.conf)
     if (conf.isSqlEnabled) {
-      println(s"GpuTransitionOverrides: BEFORE:\n$plan")
+      //println(s"GpuTransitionOverrides: BEFORE:\n$plan")
       var updatedPlan = insertHashOptimizeSorts(plan)
       updatedPlan = insertCoalesce(insertColumnarFromGpu(updatedPlan))
       updatedPlan = optimizeCoalesce(optimizeGpuPlanTransitions(updatedPlan))
@@ -325,7 +314,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       if (conf.isTestEnabled) {
         assertIsOnTheGpu(updatedPlan, conf)
       }
-      println(s"GpuTransitionOverrides: AFTER:\n$updatedPlan")
+      //println(s"GpuTransitionOverrides: AFTER:\n$updatedPlan")
       updatedPlan
     } else {
       plan

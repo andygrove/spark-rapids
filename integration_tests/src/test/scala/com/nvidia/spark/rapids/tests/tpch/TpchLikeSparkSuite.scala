@@ -135,7 +135,7 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
   testTpchLike("Something like TPCH Query 2", 1) {
     session => {
       // this test fails when AQE is enabled - https://github.com/NVIDIA/spark-rapids/issues/275
-      assume(!adaptiveQueryEnabled)
+      //assume(!adaptiveQueryEnabled)
       Q2Like(session)
     }
   }
