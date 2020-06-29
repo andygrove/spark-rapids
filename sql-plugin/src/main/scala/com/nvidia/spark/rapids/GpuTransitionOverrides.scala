@@ -18,6 +18,7 @@ package com.nvidia.spark.rapids
 
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeReference, Expression, InputFileBlockLength, InputFileBlockStart, InputFileName, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.objects.CreateExternalRow
+import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, BroadcastQueryStageExec, CustomShuffleReaderExec, QueryStageExec, ShuffleQueryStageExec}
@@ -41,6 +42,14 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
     case ColumnarToRowExec(bb: GpuExec) =>
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
+
+      // EnsureRequirements may have inserted a CPU shuffle in between two GPU operators
+    case s: ShuffleExchangeExec if s.child.supportsColumnar =>
+      val p = s.outputPartitioning match {
+        case SinglePartition => GpuSinglePartitioning(Seq.empty)
+      }
+      GpuShuffleExchangeExec(p, optimizeGpuPlanTransitions(s.child),
+        s.canChangeNumPartitions)
 
     case HostColumnarToGpu(b: QueryStageExec, _) =>
       optimizeGpuPlanTransitions(b)

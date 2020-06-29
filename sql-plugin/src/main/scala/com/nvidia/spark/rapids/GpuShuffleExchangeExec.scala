@@ -64,9 +64,6 @@ case class GpuShuffleExchangeExec(
     canChangeNumPartitions: Boolean = true) extends Exchange
     with GpuExec with ShuffleExchangeExecLike {
 
-
-//  override def withChild(newChild: SparkPlan): SparkPlan = this.copy(child = newChild)
-
   /**
    * Lots of small output batches we want to group together.
    */
