@@ -24,7 +24,7 @@ import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, Broadcast
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
-import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExecLike, Exchange, ShuffleExchangeExec, ShuffleExchangeExecLike}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 
 /**
@@ -37,12 +37,18 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = plan match {
     case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
       GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
-    case HostColumnarToGpu(b: QueryStageExec, _) =>
-      optimizeGpuPlanTransitions(b)
-    case HostColumnarToGpu(RowToColumnarExec(r2c: RowToColumnarExec), goal) =>
-      GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+    case ColumnarToRowExec(bb: GpuBringBackToHost) =>
+      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
     case ColumnarToRowExec(bb: GpuExec) =>
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
+
+    case HostColumnarToGpu(b: QueryStageExec, _) =>
+      optimizeGpuPlanTransitions(b)
+    case HostColumnarToGpu(b: BroadcastExchangeExecLike, _) =>
+      optimizeGpuPlanTransitions(b)
+    case HostColumnarToGpu(b: ShuffleExchangeExecLike, _) =>
+      optimizeGpuPlanTransitions(b)
+
     case GpuCoalesceBatches(s: GpuShuffleExchangeExec, _) =>
       optimizeGpuPlanTransitions(s)
     case GpuColumnarToRowExec(GpuColumnarToRowExec(bb, _), _) =>
