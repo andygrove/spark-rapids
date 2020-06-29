@@ -441,10 +441,13 @@ abstract class SparkPlanMeta[INPUT <: SparkPlan](plan: INPUT,
 
   private def fixUpExchangeOverhead(): Unit = {
     childPlans.foreach(_.fixUpExchangeOverhead())
-    if (wrapped.isInstanceOf[ShuffleExchangeExec] &&
-      (parent.filter(_.canThisBeReplaced).isEmpty &&
-        childPlans.filter(_.canThisBeReplaced).isEmpty)) {
-      willNotWorkOnGpu("Columnar exchange without columnar children is inefficient")
+    wrapped match {
+      case s: ShuffleExchangeExec if !s.child.supportsColumnar =>
+        if (parent.filter(_.canThisBeReplaced).isEmpty &&
+            childPlans.filter(_.canThisBeReplaced).isEmpty) {
+          willNotWorkOnGpu("Columnar exchange without columnar children is inefficient")
+        }
+      case _ =>
     }
   }
 

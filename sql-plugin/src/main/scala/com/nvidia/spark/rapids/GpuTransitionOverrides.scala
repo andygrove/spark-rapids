@@ -18,14 +18,15 @@ package com.nvidia.spark.rapids
 
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeReference, Expression, InputFileBlockLength, InputFileBlockStart, InputFileName, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.objects.CreateExternalRow
-import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
+import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, SinglePartition}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, BroadcastQueryStageExec, CustomShuffleReaderExec, QueryStageExec, ShuffleQueryStageExec}
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExecLike, Exchange, ShuffleExchangeExec, ShuffleExchangeExecLike}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, BroadcastExchangeExecLike, Exchange, ShuffleExchangeExec, ShuffleExchangeExecLike}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 
 /**
@@ -43,13 +44,26 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     case ColumnarToRowExec(bb: GpuExec) =>
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
 
-      // EnsureRequirements may have inserted a CPU shuffle in between two GPU operators
+    // EnsureRequirements may have inserted a CPU broadcast in between two GPU operators
+    case b: BroadcastExchangeExec if b.child.supportsColumnar =>
+      b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
+
+    // EnsureRequirements may have inserted a CPU shuffle in between two GPU operators
     case s: ShuffleExchangeExec if s.child.supportsColumnar =>
       val p = s.outputPartitioning match {
         case SinglePartition => GpuSinglePartitioning(Seq.empty)
+        case HashPartitioning(expressions, numPartitions) =>
+        val x: Seq[Expression] = expressions
+            .map(e => GpuOverrides.wrapExpr(e, conf, None)
+                .convertToGpu())
+          GpuHashPartitioning(x, numPartitions)
       }
       GpuShuffleExchangeExec(p, optimizeGpuPlanTransitions(s.child),
         s.canChangeNumPartitions)
+
+    // TODO this seems hacky .. would be better to prevent this happening in the first place
+    case a: HashAggregateExec if a.child.supportsColumnar =>
+      a.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(a.child)))
 
     case HostColumnarToGpu(b: QueryStageExec, _) =>
       optimizeGpuPlanTransitions(b)
