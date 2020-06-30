@@ -58,7 +58,7 @@ object TpcxbbLikeBench extends Logging {
         .master("local[*]")
         .appName("TPCxBB Bench")
 //        .config("spark.sql.join.preferSortMergeJoin", false)
-        .config("spark.sql.adaptive.enabled", "false")
+        .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.shuffle.partitions", 2)
 //        .config("spark.sql.queryExecutionListeners",
 //          "com.nvidia.spark.rapids.ExecutionPlanCaptureCallback")

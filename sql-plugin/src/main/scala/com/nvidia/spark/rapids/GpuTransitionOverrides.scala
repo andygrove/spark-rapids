@@ -41,6 +41,10 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     val adaptiveEnabled = plan.conf.getConfString("spark.sql.adaptive.enabled", "false").toBoolean
 
     plan match {
+
+      case s: ShuffleQueryStageExec if adaptiveEnabled && s.supportsColumnar =>
+        GpuCoalesceBatches(s, TargetSize(Long.MaxValue))
+
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
         GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
       case ColumnarToRowExec(bb: GpuBringBackToHost) =>

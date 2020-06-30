@@ -17,7 +17,7 @@
 
 package ai.rapids.spark
 
-import com.nvidia.spark.rapids.GpuExec
+import com.nvidia.spark.rapids.{GpuCoalesceBatches, GpuExec}
 import com.nvidia.spark.rapids.GpuMetricNames.{DESCRIPTION_TOTAL_TIME, TOTAL_TIME}
 
 import org.apache.spark.rdd.RDD
@@ -26,7 +26,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
 import org.apache.spark.sql.execution.{PartialMapperPartitionSpec, ShufflePartitionSpec, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExecLike, ShuffleQueryStageExec}
-import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchangeExecLike}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.rapids.execution.ShuffledBatchRDD
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -57,9 +57,9 @@ case class GpuCustomShuffleReaderExec(
         partitionSpecs.map(_.asInstanceOf[PartialMapperPartitionSpec].mapIndex).toSet.size ==
             partitionSpecs.length) {
       child match {
-        case ShuffleQueryStageExec(_, s: ShuffleExchangeExec) =>
+        case ShuffleQueryStageExec(_, s: ShuffleExchangeExecLike) =>
           s.child.outputPartitioning
-        case ShuffleQueryStageExec(_, r @ ReusedExchangeExec(_, s: ShuffleExchangeExec)) =>
+        case ShuffleQueryStageExec(_, r @ ReusedExchangeExec(_, s: ShuffleExchangeExecLike)) =>
           s.child.outputPartitioning match {
             case e: Expression => r.updateAttr(e).asInstanceOf[Partitioning]
             case other => other
@@ -91,7 +91,15 @@ case class GpuCustomShuffleReaderExec(
         case stage: ShuffleQueryStageExec =>
           new ShuffledBatchRDD(
             stage.shuffle.shuffleDependencyColumnar, stage.shuffle.readMetrics ++ metrics,
-            partitionSpecs.toArray) //TODO ???
+            partitionSpecs.toArray)
+        case GpuCoalesceBatches(child, _) => child match {
+          case stage: ShuffleQueryStageExec =>
+            new ShuffledBatchRDD(
+              stage.shuffle.shuffleDependencyColumnar, stage.shuffle.readMetrics ++ metrics,
+              partitionSpecs.toArray)
+          case _ =>
+            throw new IllegalStateException("operating on canonicalization plan")
+        }
         case _ =>
           throw new IllegalStateException("operating on canonicalization plan")
       }
