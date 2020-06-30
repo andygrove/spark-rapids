@@ -61,8 +61,10 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     case HostColumnarToGpu(b: ShuffleExchangeExecLike, _) =>
       optimizeGpuPlanTransitions(b)
 
-    case GpuCoalesceBatches(s: GpuShuffleExchangeExec, _) =>
-      optimizeGpuPlanTransitions(s)
+    // these need swapping around
+    case GpuCoalesceBatches(s: GpuShuffleExchangeExec, goal) =>
+      s.copy(child = GpuCoalesceBatches(optimizeGpuPlanTransitions(s.child), goal))
+
     case GpuColumnarToRowExec(GpuColumnarToRowExec(bb, _), _) =>
       GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
     case GpuRowToColumnarExec(HostColumnarToGpu(bb, _), _) =>
