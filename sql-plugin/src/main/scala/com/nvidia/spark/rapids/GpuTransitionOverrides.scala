@@ -36,41 +36,47 @@ import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
-  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = plan match {
-    case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
-      GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
-    case ColumnarToRowExec(bb: GpuBringBackToHost) =>
-      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
-    case ColumnarToRowExec(bb: GpuExec) =>
-      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
+  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
 
-    // EnsureRequirements may have inserted a CPU exchange in between two GPU operators
-    case b: BroadcastExchangeExec if b.child.supportsColumnar =>
-      b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
-    case b: ShuffleExchangeExec if b.child.supportsColumnar =>
-      b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
+    val adaptiveEnabled = plan.conf.getConfString("spark.sql.adaptive.enabled", "false").toBoolean
 
-    // TODO this seems hacky .. would be better to prevent this happening in the first place
-    case a: HashAggregateExec if a.child.supportsColumnar =>
-      a.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(a.child)))
+    plan match {
+      case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+      case ColumnarToRowExec(bb: GpuBringBackToHost) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
+      case ColumnarToRowExec(bb: GpuExec) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
 
-    case HostColumnarToGpu(b: QueryStageExec, _) =>
-      optimizeGpuPlanTransitions(b)
-    case HostColumnarToGpu(b: BroadcastExchangeExecLike, _) =>
-      optimizeGpuPlanTransitions(b)
-    case HostColumnarToGpu(b: ShuffleExchangeExecLike, _) =>
-      optimizeGpuPlanTransitions(b)
+      // EnsureRequirements may have inserted a CPU exchange in between two GPU operators
+      case b: BroadcastExchangeExec if b.child.supportsColumnar =>
+        b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
+      case b: ShuffleExchangeExec if b.child.supportsColumnar =>
+        b.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(b.child)))
 
-    // these need swapping around
-    case GpuCoalesceBatches(s: GpuShuffleExchangeExec, goal) =>
-      s.copy(child = GpuCoalesceBatches(optimizeGpuPlanTransitions(s.child), goal))
+      // TODO this seems hacky .. would be better to prevent this happening in the first place
+      case a: HashAggregateExec if a.child.supportsColumnar =>
+        a.copy(child = GpuColumnarToRowExec(optimizeGpuPlanTransitions(a.child)))
 
-    case GpuColumnarToRowExec(GpuColumnarToRowExec(bb, _), _) =>
-      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
-    case GpuRowToColumnarExec(HostColumnarToGpu(bb, _), _) =>
-      optimizeGpuPlanTransitions(bb)
-    case p =>
-      p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+      case HostColumnarToGpu(b: QueryStageExec, _) =>
+        optimizeGpuPlanTransitions(b)
+      case HostColumnarToGpu(b: BroadcastExchangeExecLike, _) =>
+        optimizeGpuPlanTransitions(b)
+      case HostColumnarToGpu(b: ShuffleExchangeExecLike, _) =>
+        optimizeGpuPlanTransitions(b)
+
+      case GpuCoalesceBatches(s: GpuShuffleExchangeExec, _) if adaptiveEnabled =>
+        // when creating a new query stage, we need to return an exchange and insert the coalesce
+        // later on ... which is not done yet, and it hurts performance :-(
+        optimizeGpuPlanTransitions(s)
+
+      case GpuColumnarToRowExec(GpuColumnarToRowExec(bb, _), _) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb))
+      case GpuRowToColumnarExec(HostColumnarToGpu(bb, _), _) =>
+        optimizeGpuPlanTransitions(bb)
+      case p =>
+        p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+    }
   }
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
@@ -181,7 +187,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    */
   private def insertColumnarFromGpu(plan: SparkPlan): SparkPlan = {
     if (plan.supportsColumnar && plan.isInstanceOf[GpuExec]) {
-      println(s"insertColumnarFromGpu would have inserted GpuBringBackToHost for:\n$plan")
+      // println(s"insertColumnarFromGpu would have inserted GpuBringBackToHost for:\n$plan")
       /*GpuBringBackToHost(*/insertColumnarToGpu(plan)/*)*/
     } else {
       plan.withNewChildren(plan.children.map(insertColumnarFromGpu))
@@ -197,7 +203,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         plan.withNewChildren(plan.children.map(insertColumnarToGpu))
       case _ =>
         if (plan.supportsColumnar && !plan.isInstanceOf[GpuExec]) {
-          println(s"insertColumnarToGpu inserted GpuBringBackToHost for:\n$plan")
+          // println(s"insertColumnarToGpu inserted GpuBringBackToHost for:\n$plan")
           HostColumnarToGpu(insertColumnarFromGpu(plan), TargetSize(conf.gpuTargetBatchSizeBytes))
         } else {
           plan.withNewChildren(plan.children.map(insertColumnarToGpu))
