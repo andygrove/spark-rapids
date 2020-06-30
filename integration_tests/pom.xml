@@ -33,7 +33,7 @@
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <version>14.0.1</version>
-            <scope>test</scope>
+<!--            <scope>test</scope>-->
         </dependency>
         <dependency>
             <groupId>org.scala-lang</groupId>
@@ -56,16 +56,20 @@
         </dependency>
         <dependency>
             <groupId>com.nvidia</groupId>
-            <artifactId>rapids-4-spark_${scala.binary.version}</artifactId>
+            <artifactId>rapids-4-spark-sql_${scala.binary.version}</artifactId>
             <version>${project.version}</version>
-            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nvidia</groupId>
+            <artifactId>rapids-4-spark-shuffle_${scala.binary.version}</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>com.nvidia</groupId>
             <artifactId>rapids-4-spark-tests_${scala.binary.version}</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
-            <scope>test</scope>
+<!--            <scope>test</scope>-->
         </dependency>
     </dependencies>
 

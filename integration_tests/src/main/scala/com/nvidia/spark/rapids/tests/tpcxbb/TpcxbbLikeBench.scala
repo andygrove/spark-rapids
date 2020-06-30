@@ -54,7 +54,20 @@ object TpcxbbLikeBench extends Logging {
     val input = args(0)
     val queryIndex = args(1).toInt
 
-    val spark = SparkSession.builder.appName("TPCxBB Bench").getOrCreate()
+    val spark = SparkSession.builder
+        .master("local[*]")
+        .appName("TPCxBB Bench")
+//        .config("spark.sql.join.preferSortMergeJoin", false)
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.shuffle.partitions", 2)
+//        .config("spark.sql.queryExecutionListeners",
+//          "com.nvidia.spark.rapids.ExecutionPlanCaptureCallback")
+        .config("spark.plugins", "com.nvidia.spark.SQLPlugin")
+        .config("spark.rapids.sql.test.enabled", false)
+        .config("spark.rapids.sql.explain", "ALL")
+        .config("spark.rapids.sql.incompatibleOps.enabled", true)
+        .config("spark.rapids.sql.hasNans", false)
+        .getOrCreate()
     TpcxbbLikeSpark.setupAllParquet(spark, input)
 
     val queryRunner: SparkSession => DataFrame = queryIndex match {

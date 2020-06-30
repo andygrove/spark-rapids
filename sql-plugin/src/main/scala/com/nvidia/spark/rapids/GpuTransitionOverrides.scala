@@ -179,6 +179,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    */
   private def insertColumnarFromGpu(plan: SparkPlan): SparkPlan = {
     if (plan.supportsColumnar && plan.isInstanceOf[GpuExec]) {
+      println(s"insertColumnarFromGpu would have inserted GpuBringBackToHost for:\n$plan")
       /*GpuBringBackToHost(*/insertColumnarToGpu(plan)/*)*/
     } else {
       plan.withNewChildren(plan.children.map(insertColumnarFromGpu))
@@ -194,13 +195,12 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         plan.withNewChildren(plan.children.map(insertColumnarToGpu))
       case _ =>
         if (plan.supportsColumnar && !plan.isInstanceOf[GpuExec]) {
+          println(s"insertColumnarToGpu inserted GpuBringBackToHost for:\n$plan")
           HostColumnarToGpu(insertColumnarFromGpu(plan), TargetSize(conf.gpuTargetBatchSizeBytes))
         } else {
           plan.withNewChildren(plan.children.map(insertColumnarToGpu))
         }
     }
-
-
   }
 
   private def insertHashOptimizeSorts(plan: SparkPlan): SparkPlan = {
