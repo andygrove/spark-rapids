@@ -35,9 +35,6 @@ import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 case class GpuColumnarToRowExec(child: SparkPlan, exportColumnarRdd: Boolean = false) 
     extends UnaryExecNode with CodegenSupport with GpuExec with ColumnarToRowExecLike {
 
-  assert(!child.isInstanceOf[GpuColumnarToRowExec])
-  assert(!child.isInstanceOf[GpuRowToColumnarExec])
-
   // We need to do this so the assertions don't fail
   override def supportsColumnar = false
 
