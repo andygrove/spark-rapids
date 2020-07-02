@@ -25,6 +25,7 @@ import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuShuffleExchangeExec}
 
@@ -45,32 +46,20 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         // we need to insert the coalesce batches step later, after the query stage has executed
         optimizeGpuPlanTransitions(e)
 
-////      case HostColumnarToGpu(e: BroadcastQueryStageExec, _) =>
-////        optimizeGpuPlanTransitions(e)
-////      case HostColumnarToGpu(e: ShuffleQueryStageExec, _) =>
-////        optimizeGpuPlanTransitions(e)
-////
-//      // AQE newQueryStage expects to get GpuBroadcastExchangeExec or GpuShuffleExchangeExec back
-//      // and can't be wrapped
-//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuBroadcastExchangeExec)) =>
-//        e
-//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuShuffleExchangeExec)) =>
-//        e
-      case GpuColumnarToRowExec(e: GpuBroadcastExchangeExec, _) =>
-        optimizeGpuPlanTransitions(e)
-//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuShuffleExchangeExec)) =>
-//        e
-//
-//      case GpuBringBackToHost(GpuCoalesceBatches(e: GpuShuffleExchangeExec, _)) =>
-//        optimizeGpuPlanTransitions(e)
-//      case GpuColumnarToRowExec(e: GpuShuffleExchangeExec, _) =>
-//        optimizeGpuPlanTransitions(e)
-
-//      case GpuBringBackToHost(GpuCoalesceBatches(e: GpuShuffleExchangeExec, _)) =>
-//        optimizeGpuPlanTransitions(e)
+      // GPU query stages could be wrapped by a CPU join in the parent query stage
+      case ColumnarToRowExec(e: BroadcastQueryStageExec) => e
+      case ColumnarToRowExec(e: ShuffleQueryStageExec) => e
 
       case HostColumnarToGpu(e: BroadcastQueryStageExec, _) => e
       case HostColumnarToGpu(e: ShuffleQueryStageExec, _) => e
+
+      // trying to fix TPCH 16 and 21 ...
+      case j: BroadcastNestedLoopJoinExec =>
+        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
+          right = fix(optimizeGpuPlanTransitions(j.right)))
+      case j: BroadcastHashJoinExec =>
+        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
+          right = fix(optimizeGpuPlanTransitions(j.right)))
 
       case ColumnarToRowExec(bb: GpuBringBackToHost) =>
         //TODO really need a transformUp approach here
@@ -86,6 +75,12 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
     newPlan
   }
+
+  def fix(p: SparkPlan) = p match {
+    case b: BroadcastQueryStageExec => GpuColumnarToRowExec(b)
+    case other => other
+  }
+
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
     case c2r: GpuColumnarToRowExec if c2r.child.isInstanceOf[GpuCoalesceBatches] =>
