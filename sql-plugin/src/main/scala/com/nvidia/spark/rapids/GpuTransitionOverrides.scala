@@ -25,6 +25,7 @@ import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
+import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuShuffleExchangeExec}
 
 /**
  * Rules that run after the row to columnar and columnar to row transitions have been inserted.
@@ -33,13 +34,24 @@ import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
-  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = plan match {
-    case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
-      GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
-    case ColumnarToRowExec(bb: GpuBringBackToHost) =>
-      GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
-    case p =>
-      p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+  def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
+    println(s"optimizeGpuPlanTransitions:\n${plan}")
+    plan match {
+      case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+      case GpuColumnarToRowExec(e: GpuShuffleExchangeExec, _) =>
+        // when AQE is planning a new query stage, the final result is forced to row-based
+        // and we have to undo that here
+        e
+      case GpuColumnarToRowExec(e: GpuBroadcastExchangeExec, _) =>
+        // when AQE is planning a new query stage, the final result is forced to row-based
+        // and we have to undo that here
+        e
+      case ColumnarToRowExec(bb: GpuBringBackToHost) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
+      case p =>
+        p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+    }
   }
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
