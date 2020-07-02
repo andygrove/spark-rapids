@@ -20,6 +20,7 @@ import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Attribut
 import org.apache.spark.sql.catalyst.expressions.objects.CreateExternalRow
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.adaptive.{BroadcastQueryStageExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
@@ -35,23 +36,55 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
   def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
-    println(s"optimizeGpuPlanTransitions:\n${plan}")
-    plan match {
+    println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
+    val newPlan = plan match {
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
         GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
-      case GpuColumnarToRowExec(e: GpuShuffleExchangeExec, _) =>
-        // when AQE is planning a new query stage, the final result is forced to row-based
-        // and we have to undo that here
-        e
+
+      case GpuCoalesceBatches(e: GpuShuffleExchangeExec, _) =>
+        // we need to insert the coalesce batches step later, after the query stage has executed
+        optimizeGpuPlanTransitions(e)
+
+////      case HostColumnarToGpu(e: BroadcastQueryStageExec, _) =>
+////        optimizeGpuPlanTransitions(e)
+////      case HostColumnarToGpu(e: ShuffleQueryStageExec, _) =>
+////        optimizeGpuPlanTransitions(e)
+////
+//      // AQE newQueryStage expects to get GpuBroadcastExchangeExec or GpuShuffleExchangeExec back
+//      // and can't be wrapped
+//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuBroadcastExchangeExec)) =>
+//        e
+//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuShuffleExchangeExec)) =>
+//        e
       case GpuColumnarToRowExec(e: GpuBroadcastExchangeExec, _) =>
-        // when AQE is planning a new query stage, the final result is forced to row-based
-        // and we have to undo that here
-        e
+        optimizeGpuPlanTransitions(e)
+//      case ColumnarToRowExec(GpuBringBackToHost(e: GpuShuffleExchangeExec)) =>
+//        e
+//
+//      case GpuBringBackToHost(GpuCoalesceBatches(e: GpuShuffleExchangeExec, _)) =>
+//        optimizeGpuPlanTransitions(e)
+//      case GpuColumnarToRowExec(e: GpuShuffleExchangeExec, _) =>
+//        optimizeGpuPlanTransitions(e)
+
+//      case GpuBringBackToHost(GpuCoalesceBatches(e: GpuShuffleExchangeExec, _)) =>
+//        optimizeGpuPlanTransitions(e)
+
+      case HostColumnarToGpu(e: BroadcastQueryStageExec, _) => e
+      case HostColumnarToGpu(e: ShuffleQueryStageExec, _) => e
+
       case ColumnarToRowExec(bb: GpuBringBackToHost) =>
-        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
+        //TODO really need a transformUp approach here
+        optimizeGpuPlanTransitions(bb.child) match {
+          case e: GpuBroadcastExchangeExec => e
+          case e: GpuShuffleExchangeExec => e
+          case other => GpuColumnarToRowExec(other)
+      }
+
       case p =>
         p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
     }
+    println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
+    newPlan
   }
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
@@ -162,6 +195,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    */
   private def insertColumnarFromGpu(plan: SparkPlan): SparkPlan = {
     if (plan.supportsColumnar && plan.isInstanceOf[GpuExec]) {
+      println(s"Inserting GpuBringBackToHost for:\n${plan}")
       GpuBringBackToHost(insertColumnarToGpu(plan))
     } else {
       plan.withNewChildren(plan.children.map(insertColumnarFromGpu))

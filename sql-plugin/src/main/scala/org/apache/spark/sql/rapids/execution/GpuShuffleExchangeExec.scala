@@ -114,10 +114,6 @@ case class GpuShuffleExchangeExec(
       writeMetrics)
   }
 
-  def createShuffledBatchRDD(partitionStartIndices: Option[Array[Int]]): ShuffledBatchRDD = {
-    new ShuffledBatchRDD(shuffleDependencyColumnar, metrics ++ readMetrics, partitionStartIndices)
-  }
-
   /**
    * Caches the created ShuffleBatchRDD so we can reuse that.
    */
@@ -129,7 +125,7 @@ case class GpuShuffleExchangeExec(
   protected override def doExecuteColumnar(): RDD[ColumnarBatch] = attachTree(this, "execute") {
     // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
     if (cachedShuffleRDD == null) {
-      cachedShuffleRDD = createShuffledBatchRDD(None)
+      cachedShuffleRDD = new ShuffledBatchRDD(shuffleDependencyColumnar, metrics ++ readMetrics)
     }
     cachedShuffleRDD
   }

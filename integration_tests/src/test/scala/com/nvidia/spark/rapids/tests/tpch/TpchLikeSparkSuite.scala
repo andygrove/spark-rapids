@@ -61,44 +61,44 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
     TpchLikeSpark.setupAllParquet(session, "src/test/resources/tpch/")
   }
 
-  test("GPU data export with conversion") {
-    val df = session.sql(
-      """
-        | select l_orderkey, SUM(l_quantity), SUM(l_discount), SUM(l_tax) from lineitem
-        | group by l_orderkey
-      """.stripMargin)
-    val rdd = ColumnarRdd(df)
-    assert(rdd != null)
-    assert(255.0 == rdd.map(table => try {
-      table.getRowCount
-    } finally {
-      table.close
-    }).sum())
-    // max order key
-    assert(999 == rdd.map(table => try {
-      table.getColumn(0).max().getLong
-    } finally {
-      table.close()
-    }).max())
-  }
-
-  test("zero copy GPU data export") {
-    val df = session.sql("""select l_orderkey, l_quantity, l_discount, l_tax from lineitem""")
-    val rdd = ColumnarRdd(df)
-    assert(rdd != null)
-    assert(1000.0 == rdd.map(table => try {
-      table.getRowCount
-    } finally {
-      table.close()
-    }).sum())
-
-    // Max order key
-    assert(999 == rdd.map(table => try {
-      table.getColumn(0).max().getLong
-    } finally {
-      table.close()
-    }).max())
-  }
+//  test("GPU data export with conversion") {
+//    val df = session.sql(
+//      """
+//        | select l_orderkey, SUM(l_quantity), SUM(l_discount), SUM(l_tax) from lineitem
+//        | group by l_orderkey
+//      """.stripMargin)
+//    val rdd = ColumnarRdd(df)
+//    assert(rdd != null)
+//    assert(255.0 == rdd.map(table => try {
+//      table.getRowCount
+//    } finally {
+//      table.close
+//    }).sum())
+//    // max order key
+//    assert(999 == rdd.map(table => try {
+//      table.getColumn(0).max().getLong
+//    } finally {
+//      table.close()
+//    }).max())
+//  }
+//
+//  test("zero copy GPU data export") {
+//    val df = session.sql("""select l_orderkey, l_quantity, l_discount, l_tax from lineitem""")
+//    val rdd = ColumnarRdd(df)
+//    assert(rdd != null)
+//    assert(1000.0 == rdd.map(table => try {
+//      table.getRowCount
+//    } finally {
+//      table.close()
+//    }).sum())
+//
+//    // Max order key
+//    assert(999 == rdd.map(table => try {
+//      table.getColumn(0).max().getLong
+//    } finally {
+//      table.close()
+//    }).max())
+//  }
 
   private def testTpchLike(
       name: String,
@@ -129,11 +129,7 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
   }
 
   testTpchLike("Something like TPCH Query 2", 1) {
-    session => {
-      // this test fails when AQE is enabled - https://github.com/NVIDIA/spark-rapids/issues/275
-      assume(!adaptiveQueryEnabled)
-      Q2Like(session)
-    }
+    session => Q2Like(session)
   }
 
   testTpchLike("Something like TPCH Query 3", 3) {
