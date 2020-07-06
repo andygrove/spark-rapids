@@ -23,7 +23,7 @@ import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, Broadcast
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
-import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchange, Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuShuffleExchangeExec}
@@ -263,7 +263,11 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   }
 
   def assertIsOnTheGpu(plan: SparkPlan, conf: RapidsConf): Unit = {
+    val isAdaptiveEnabled = plan.conf
+        .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
     plan match {
+      case _: BroadcastExchange if isAdaptiveEnabled =>
+        // broadcasts are left on CPU for now
       case _: AdaptiveSparkPlanExec | _: QueryStageExec | _: CustomShuffleReaderExec =>
         // we do not yet fully support GPU-acceleration when AQE is enabled, so we skip checking
         // the plan in this case - https://github.com/NVIDIA/spark-rapids/issues/5
