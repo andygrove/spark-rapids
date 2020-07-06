@@ -55,14 +55,15 @@ class GpuBroadcastHashJoinMeta(
       case BuildRight => childPlans(1)
     }
 
-    //TODO this needs work to be compatible with AQE because the build side may be a QueryStageExec
-//    if (!buildSide.canThisBeReplaced) {
-//      willNotWorkOnGpu("the broadcast for this join must be on the GPU too")
-//    }
-//
-//    if (!canThisBeReplaced) {
-//      buildSide.willNotWorkOnGpu("the BroadcastHashJoin this feeds is not on the GPU")
-//    }
+    // with AQE this will stay on CPU
+
+    if (!buildSide.canThisBeReplaced) {
+      willNotWorkOnGpu("the broadcast for this join must be on the GPU too")
+    }
+
+    if (!canThisBeReplaced) {
+      buildSide.willNotWorkOnGpu("the BroadcastHashJoin this feeds is not on the GPU")
+    }
   }
 
   override def convertToGpu(): GpuExec = {

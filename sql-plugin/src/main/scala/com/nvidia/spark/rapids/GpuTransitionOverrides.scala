@@ -36,7 +36,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
   def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
-    println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
+    if (plan.isInstanceOf[Exchange]) {
+      println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
+    }
     val newPlan = plan match {
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
         GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
@@ -53,12 +55,12 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case HostColumnarToGpu(e: ShuffleQueryStageExec, _) => e
 
       // trying to fix TPCH 16 and 21 ...
-      case j: BroadcastNestedLoopJoinExec =>
-        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
-          right = fix(optimizeGpuPlanTransitions(j.right)))
-      case j: BroadcastHashJoinExec =>
-        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
-          right = fix(optimizeGpuPlanTransitions(j.right)))
+//      case j: BroadcastNestedLoopJoinExec =>
+//        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
+//          right = fix(optimizeGpuPlanTransitions(j.right)))
+//      case j: BroadcastHashJoinExec =>
+//        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
+//          right = fix(optimizeGpuPlanTransitions(j.right)))
 
       case ColumnarToRowExec(bb: GpuBringBackToHost) =>
         //TODO really need a transformUp approach here
@@ -71,7 +73,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case p =>
         p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
     }
-    println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
+    if (newPlan.isInstanceOf[Exchange]) {
+      println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
+    }
     newPlan
   }
 
@@ -189,7 +193,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
    */
   private def insertColumnarFromGpu(plan: SparkPlan): SparkPlan = {
     if (plan.supportsColumnar && plan.isInstanceOf[GpuExec]) {
-      println(s"Inserting GpuBringBackToHost for:\n${plan}")
+      //println(s"Inserting GpuBringBackToHost for:\n${plan}")
       GpuBringBackToHost(insertColumnarToGpu(plan))
     } else {
       plan.withNewChildren(plan.children.map(insertColumnarFromGpu))

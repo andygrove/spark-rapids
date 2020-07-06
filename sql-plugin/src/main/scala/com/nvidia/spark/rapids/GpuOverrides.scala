@@ -42,7 +42,7 @@ import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.datasources.v2.csv.CSVScan
 import org.apache.spark.sql.execution.datasources.v2.orc.OrcScan
 import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec, ShuffledHashJoinExec, SortMergeJoinExec}
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.rapids._
@@ -1759,6 +1759,9 @@ object GpuOverrides {
 
 case class GpuOverrides() extends Rule[SparkPlan] with Logging {
   override def apply(plan: SparkPlan) :SparkPlan = {
+    if (plan.isInstanceOf[Exchange]) {
+      println(s"GpuOverrides called with:\n$plan")
+    }
     val conf = new RapidsConf(plan.conf)
     if (conf.isSqlEnabled) {
       val wrap = GpuOverrides.wrapPlan(plan, conf, None)
@@ -1769,7 +1772,12 @@ case class GpuOverrides() extends Rule[SparkPlan] with Logging {
         logWarning(s"\n${wrap.explain(exp.equalsIgnoreCase("ALL"))}")
       }
       val convertedPlan = wrap.convertIfNeeded()
-      addSortsIfNeeded(convertedPlan, conf)
+      val newPlan = addSortsIfNeeded(convertedPlan, conf)
+      if (plan.isInstanceOf[Exchange]) {
+        println(s"GpuOverrides returning:\n$newPlan")
+      }
+      newPlan
+
     } else {
       plan
     }
