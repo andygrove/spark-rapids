@@ -17,7 +17,7 @@
 package com.nvidia.spark.rapids.tests.tpch
 
 import com.nvidia.spark.RapidsShuffleManager
-import com.nvidia.spark.rapids.{ColumnarRdd, ExecutionPlanCaptureCallback}
+import com.nvidia.spark.rapids.{ExecutionPlanCaptureCallback}
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -38,7 +38,7 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
       .config("spark.sql.join.preferSortMergeJoin", false)
       .config("spark.sql.shuffle.partitions", 2)
       .config("spark.sql.queryExecutionListeners",
-        "com.nvidia.spark.rapids.ExecutionPlanCaptureCallback")
+        classOf[ExecutionPlanCaptureCallback].getCanonicalName)
       .config("spark.plugins", "com.nvidia.spark.SQLPlugin")
       .config("spark.rapids.sql.test.enabled", false)
       .config("spark.rapids.sql.explain", true)
@@ -123,6 +123,7 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
       assert(expectedRowCount == c)
     }
   }
+
 
   testTpchLike("Something like TPCH Query 1", 4) {
     session => Q1Like(session)

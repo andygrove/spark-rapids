@@ -17,10 +17,9 @@
 package com.nvidia.spark.rapids
 
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeReference, Expression, InputFileBlockLength, InputFileBlockStart, InputFileName, SortOrder}
-import org.apache.spark.sql.catalyst.expressions.objects.CreateExternalRow
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.adaptive.{BroadcastQueryStageExec, ShuffleQueryStageExec}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, BroadcastQueryStageExec, CustomShuffleReaderExec, QueryStageExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
@@ -261,6 +260,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
 
   def assertIsOnTheGpu(plan: SparkPlan, conf: RapidsConf): Unit = {
     plan match {
+      case _: AdaptiveSparkPlanExec | _: QueryStageExec | _: CustomShuffleReaderExec =>
+        // we do not yet fully support GPU-acceleration when AQE is enabled, so we skip checking
+        // the plan in this case - https://github.com/NVIDIA/spark-rapids/issues/5
       case lts: LocalTableScanExec =>
         if (!lts.expressions.forall(_.isInstanceOf[AttributeReference])) {
           throw new IllegalArgumentException("It looks like some operations were " +

@@ -77,7 +77,8 @@
         <module>tests</module>
         <module>integration_tests</module>
         <module>api_validation</module>
-        <module>../spark</module>
+
+<!--        <module>../spark</module>-->
     </modules>
 
     <profiles>
