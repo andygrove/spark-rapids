@@ -23,7 +23,7 @@ import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, Broadcast
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
-import org.apache.spark.sql.execution.exchange.{BroadcastExchange, Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchange, BroadcastExchangeExec, Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuShuffleExchangeExec}
@@ -47,6 +47,10 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         // we need to insert the coalesce batches step later, after the query stage has executed
         optimizeGpuPlanTransitions(e)
 
+      // CPU broadcast wrapping a GPU shuffle
+      case BroadcastExchangeExec(mode, ColumnarToRowExec(s: ShuffleQueryStageExec)) =>
+        BroadcastExchangeExec(mode, GpuColumnarToRowExec(s))
+
       // GPU query stages could be wrapped by a CPU join in the parent query stage
       case ColumnarToRowExec(e: BroadcastQueryStageExec) => e
       case ColumnarToRowExec(e: ShuffleQueryStageExec) => e
@@ -54,16 +58,8 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case HostColumnarToGpu(e: BroadcastQueryStageExec, _) => e
       case HostColumnarToGpu(e: ShuffleQueryStageExec, _) => e
 
-      // trying to fix TPCH 16 and 21 ...
-//      case j: BroadcastNestedLoopJoinExec =>
-//        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
-//          right = fix(optimizeGpuPlanTransitions(j.right)))
-//      case j: BroadcastHashJoinExec =>
-//        j.copy(left = fix(optimizeGpuPlanTransitions(j.left)),
-//          right = fix(optimizeGpuPlanTransitions(j.right)))
-
       case ColumnarToRowExec(bb: GpuBringBackToHost) =>
-        //TODO really need a transformUp approach here
+        // TODO really need a transformUp approach here
         optimizeGpuPlanTransitions(bb.child) match {
           case e: GpuBroadcastExchangeExec => e
           case e: GpuShuffleExchangeExec => e
@@ -267,6 +263,8 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
     plan match {
       case _: BroadcastExchange if isAdaptiveEnabled =>
+        // broadcasts are left on CPU for now
+      case _: BroadcastHashJoinExec if isAdaptiveEnabled =>
         // broadcasts are left on CPU for now
       case _: AdaptiveSparkPlanExec | _: QueryStageExec | _: CustomShuffleReaderExec =>
         // we do not yet fully support GPU-acceleration when AQE is enabled, so we skip checking
