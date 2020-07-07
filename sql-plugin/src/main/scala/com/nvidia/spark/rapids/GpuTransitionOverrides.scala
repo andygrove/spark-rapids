@@ -37,7 +37,28 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
   def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
-//      println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
+
+    val isAdaptiveEnabled = plan.conf
+        .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
+
+    // TODO this is a temp hack just to get to the point where tests pass both with and without
+    // AQE enabled, then we can consolidate the rules
+    if (isAdaptiveEnabled) {
+      return optimizeGpuPlanTransitionsAQE(plan)
+    }
+
+    plan match {
+      case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
+        GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
+      case ColumnarToRowExec(bb: GpuBringBackToHost) =>
+        GpuColumnarToRowExec(optimizeGpuPlanTransitions(bb.child))
+      case p =>
+        p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
+    }
+  }
+
+  def optimizeGpuPlanTransitionsAQE(plan: SparkPlan): SparkPlan = {
+    //      println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
     val newPlan = plan match {
 
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
@@ -64,20 +85,14 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
           case e: GpuBroadcastExchangeExec => e
           case e: GpuShuffleExchangeExec => e
           case other => GpuColumnarToRowExec(other)
-      }
+        }
 
       case p =>
         p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
     }
-//      println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
+    //      println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
     newPlan
   }
-
-  def fix(p: SparkPlan) = p match {
-    case b: BroadcastQueryStageExec => GpuColumnarToRowExec(b)
-    case other => other
-  }
-
 
   def optimizeCoalesce(plan: SparkPlan): SparkPlan = plan match {
     case c2r: GpuColumnarToRowExec if c2r.child.isInstanceOf[GpuCoalesceBatches] =>
