@@ -115,15 +115,10 @@ class TpchLikeSparkSuite extends FunSuite with BeforeAndAfterAll {
       val c = df.count()
       val plan = ExecutionPlanCaptureCallback.getResultWithTimeout()
       assert(plan.isDefined)
-      if (adaptiveQueryEnabled) {
-        assert(plan.get.isInstanceOf[AdaptiveSparkPlanExec])
-      } else {
-        assert(!plan.get.isInstanceOf[AdaptiveSparkPlanExec])
-      }
+      assertResult(adaptiveQueryEnabled)(plan.get.isInstanceOf[AdaptiveSparkPlanExec])
       assert(expectedRowCount == c)
     }
   }
-
 
   testTpchLike("Something like TPCH Query 1", 4) {
     session => Q1Like(session)

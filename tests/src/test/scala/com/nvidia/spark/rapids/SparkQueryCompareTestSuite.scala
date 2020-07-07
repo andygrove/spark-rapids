@@ -53,6 +53,12 @@ object TestResourceFinder {
 
 object SparkSessionHolder extends Logging {
 
+  /**
+   * This is intentionally a def rather than a val so that scalatest uses the correct value (from
+   * this class or the derived class) when registering tests.
+   */
+  def adaptiveQueryEnabled = false
+
   val spark = {
     // Timezone is fixed to UTC to allow timestamps to work by default
     TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
@@ -60,12 +66,12 @@ object SparkSessionHolder extends Logging {
     Locale.setDefault(Locale.US)
     SparkSession.builder()
       .master("local[1]")
-      .config("spark.sql.adaptive.enabled", "true")
+      .config("spark.sql.adaptive.enabled", adaptiveQueryEnabled)
       .config("spark.rapids.sql.enabled", "false")
       .config("spark.rapids.sql.test.enabled", "false")
       .config("spark.plugins", "com.nvidia.spark.SQLPlugin")
       .config("spark.sql.queryExecutionListeners",
-        "com.nvidia.spark.rapids.ExecutionPlanCaptureCallback")
+        classOf[ExecutionPlanCaptureCallback].getCanonicalName)
       .config("spark.sql.warehouse.dir", sparkWarehouseDir().getAbsolutePath)
       .appName("rapids spark plugin integration tests (scala)")
       .getOrCreate()
