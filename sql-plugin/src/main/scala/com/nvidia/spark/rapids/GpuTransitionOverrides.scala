@@ -263,8 +263,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   }
 
   def assertIsOnTheGpu(plan: SparkPlan, conf: RapidsConf): Unit = {
-    val isAdaptiveEnabled = plan.conf
-        .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
+    val isAdaptiveEnabled = plan.conf.adaptiveExecutionEnabled
     plan match {
       case _: BroadcastExchange | _: BroadcastHashJoinExec | _: BroadcastNestedLoopJoinExec
           if isAdaptiveEnabled =>
@@ -319,11 +318,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     if (conf.isSqlEnabled) {
       var updatedPlan = insertHashOptimizeSorts(plan)
       updatedPlan = insertCoalesce(insertColumnarFromGpu(updatedPlan))
-
-      val isAdaptiveEnabled = plan.conf
-          .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
-
-      updatedPlan = optimizeCoalesce(if (isAdaptiveEnabled) {
+      updatedPlan = optimizeCoalesce(if (plan.conf.adaptiveExecutionEnabled) {
         optimizeAdaptiveTransitions(updatedPlan)
       } else {
         optimizeGpuPlanTransitions(updatedPlan)
