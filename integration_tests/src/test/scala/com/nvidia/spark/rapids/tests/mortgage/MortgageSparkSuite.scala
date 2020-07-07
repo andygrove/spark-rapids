@@ -27,6 +27,7 @@ class MortgageSparkSuite extends FunSuite {
     var builder = SparkSession.builder
       .master("local[2]")
       .appName("MortgageTests")
+      .config("spark.sql.adaptive.enabled", false)
       .config("spark.sql.join.preferSortMergeJoin", false)
       .config("spark.sql.shuffle.partitions", 2)
       .config("spark.plugins", "com.nvidia.spark.SQLPlugin")
