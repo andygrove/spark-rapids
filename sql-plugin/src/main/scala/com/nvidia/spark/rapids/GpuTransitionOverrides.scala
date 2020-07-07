@@ -47,20 +47,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         // we need to insert the coalesce batches step later, after the query stage has executed
         optimizeGpuPlanTransitions(e)
 
-      // CPU broadcast wrapping a GPU shuffle
-      case BroadcastExchangeExec(mode, ColumnarToRowExec(s: ShuffleQueryStageExec)) =>
-        BroadcastExchangeExec(mode, GpuColumnarToRowExec(s))
-
-      // TODO: I'm not sure this even does anything
-      case j: BroadcastHashJoinExec if j.children.exists(_.isInstanceOf[ColumnarToRowExec]) =>
-        j.withNewChildren(j.children.map {
-          case s: ColumnarToRowExec => GpuColumnarToRowExec(s.child)
-          case other => other
-        })
-
-      // GPU query stages could be wrapped by a CPU join in the parent query stage. Note that
-      // these query stages have already executed, so we don't need to recurse down and optimize
-      // them again
+      // Query stages that have already executed on the GPU could be used by CPU operators
+      // in future query stages. Note that because these query stages have already executed, we
+      // don't need to recurse down and optimize them again
       case ColumnarToRowExec(e: BroadcastQueryStageExec) if e.supportsColumnar =>
         GpuColumnarToRowExec(e)
       case ColumnarToRowExec(e: ShuffleQueryStageExec) if e.supportsColumnar =>
