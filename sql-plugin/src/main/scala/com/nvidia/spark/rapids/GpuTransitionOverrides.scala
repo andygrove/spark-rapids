@@ -275,9 +275,8 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     val isAdaptiveEnabled = plan.conf
         .getConfString("spark.sql.adaptive.enabled", "false").toBoolean
     plan match {
-      case _: BroadcastExchange if isAdaptiveEnabled =>
-        // broadcasts are left on CPU for now
-      case _: BroadcastHashJoinExec if isAdaptiveEnabled =>
+      case _: BroadcastExchange | _: BroadcastHashJoinExec | _: BroadcastNestedLoopJoinExec
+          if isAdaptiveEnabled =>
         // broadcasts are left on CPU for now
       case _: AdaptiveSparkPlanExec | _: QueryStageExec | _: CustomShuffleReaderExec =>
         // we do not yet fully support GPU-acceleration when AQE is enabled, so we skip checking
