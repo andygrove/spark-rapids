@@ -37,10 +37,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
   var conf: RapidsConf = null
 
   def optimizeGpuPlanTransitions(plan: SparkPlan): SparkPlan = {
-    if (plan.isInstanceOf[Exchange]) {
-      println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
-    }
+//      println(s"optimizeGpuPlanTransitions: ${plan.getClass}:\n$plan")
     val newPlan = plan match {
+
       case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
         GpuRowToColumnarExec(optimizeGpuPlanTransitions(r2c.child), goal)
 
@@ -52,9 +51,20 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case BroadcastExchangeExec(mode, ColumnarToRowExec(s: ShuffleQueryStageExec)) =>
         BroadcastExchangeExec(mode, GpuColumnarToRowExec(s))
 
-      // GPU query stages could be wrapped by a CPU join in the parent query stage
-      case ColumnarToRowExec(e: BroadcastQueryStageExec) => e
-      case ColumnarToRowExec(e: ShuffleQueryStageExec) => e
+      // TODO: I'm not sure this even does anything
+      case j: BroadcastHashJoinExec if j.children.exists(_.isInstanceOf[ColumnarToRowExec]) =>
+        j.withNewChildren(j.children.map {
+          case s: ColumnarToRowExec => GpuColumnarToRowExec(s.child)
+          case other => other
+        })
+
+      // GPU query stages could be wrapped by a CPU join in the parent query stage. Note that
+      // these query stages have already executed, so we don't need to recurse down and optimize
+      // them again
+      case ColumnarToRowExec(e: BroadcastQueryStageExec) if e.supportsColumnar =>
+        GpuColumnarToRowExec(e)
+      case ColumnarToRowExec(e: ShuffleQueryStageExec) if e.supportsColumnar =>
+        GpuColumnarToRowExec(e)
 
       case HostColumnarToGpu(e: BroadcastQueryStageExec, _) => e
       case HostColumnarToGpu(e: ShuffleQueryStageExec, _) => e
@@ -70,9 +80,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case p =>
         p.withNewChildren(p.children.map(optimizeGpuPlanTransitions))
     }
-    if (newPlan.isInstanceOf[Exchange]) {
-      println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
-    }
+//      println(s"optimizeGpuPlanTransitions returning:\n$newPlan")
     newPlan
   }
 
