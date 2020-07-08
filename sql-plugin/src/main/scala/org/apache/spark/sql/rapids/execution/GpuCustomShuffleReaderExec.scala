@@ -86,13 +86,15 @@ case class GpuCustomShuffleReaderExec(
     if (cachedShuffleRDD == null) {
       cachedShuffleRDD = child match {
         case stage: ShuffleQueryStageExec =>
+          val shuffle = stage.shuffle.asInstanceOf[GpuShuffleExchangeExec]
           new ShuffledBatchRDD(
-            stage.shuffle.shuffleDependencyColumnar, stage.shuffle.readMetrics ++ metrics,
+            shuffle.shuffleDependencyColumnar, shuffle.readMetrics ++ metrics,
             partitionSpecs.toArray)
         case GpuCoalesceBatches(child, _) => child match {
           case stage: ShuffleQueryStageExec =>
+            val shuffle = stage.shuffle.asInstanceOf[GpuShuffleExchangeExec]
             new ShuffledBatchRDD(
-              stage.shuffle.shuffleDependencyColumnar, stage.shuffle.readMetrics ++ metrics,
+              shuffle.shuffleDependencyColumnar, shuffle.readMetrics ++ metrics,
               partitionSpecs.toArray)
           case _ =>
             throw new IllegalStateException("operating on canonicalization plan")

@@ -61,14 +61,18 @@ class GpuShuffleMeta(
 case class GpuShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
-    _canChangeNumPartitions: Boolean = true) extends ShuffleExchange with GpuExec {
+    override val canChangeNumPartitions: Boolean = true) extends ShuffleExchange with GpuExec {
 
   /**
    * Lots of small output batches we want to group together.
    */
   override def coalesceAfter: Boolean = true
 
-  override def canChangeNumPartitions = _canChangeNumPartitions
+  override def shuffleId: Int = shuffleDependencyColumnar.shuffleId
+
+  override def getNumMappers: Int = shuffleDependencyColumnar.rdd.getNumPartitions
+
+  override def getNumReducers: Int = shuffleDependencyColumnar.partitioner.numPartitions
 
   private lazy val writeMetrics =
     SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext)
