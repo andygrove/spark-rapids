@@ -17,8 +17,9 @@
 package com.nvidia.spark.rapids
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.plans.{ExistenceJoin, InnerLike, JoinType, LeftAnti, LeftOuter, LeftSemi, RightOuter}
 import org.apache.spark.sql.execution.SortExec
-import org.apache.spark.sql.execution.joins.{BuildRight, SortMergeJoinExec}
+import org.apache.spark.sql.execution.joins.{BuildLeft, BuildRight, SortMergeJoinExec}
 
 class GpuSortMergeJoinMeta(
     join: SortMergeJoinExec,
@@ -68,9 +69,25 @@ class GpuSortMergeJoinMeta(
       leftKeys.map(_.convertToGpu()),
       rightKeys.map(_.convertToGpu()),
       join.joinType,
-      BuildRight, // just hardcode one side
+      if (canBuildRight(join.joinType)) {
+        BuildRight
+      } else if (canBuildLeft(join.joinType)) {
+        BuildLeft
+      } else {
+        throw new IllegalStateException()
+      },
       condition.map(_.convertToGpu()),
       childPlans(0).convertIfNeeded(),
       childPlans(1).convertIfNeeded())
+  }
+
+  private def canBuildRight(joinType: JoinType): Boolean = joinType match {
+    case _: InnerLike | LeftOuter | LeftSemi | LeftAnti | _: ExistenceJoin => true
+    case _ => false
+  }
+
+  private def canBuildLeft(joinType: JoinType): Boolean = joinType match {
+    case _: InnerLike | RightOuter => true
+    case _ => false
   }
 }
