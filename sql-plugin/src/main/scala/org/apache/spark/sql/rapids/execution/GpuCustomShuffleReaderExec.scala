@@ -15,6 +15,8 @@
  */
 package org.apache.spark.sql.rapids.execution
 
+import scala.collection.mutable.ArrayBuffer
+
 import com.nvidia.spark.rapids.{GpuCoalesceBatches, GpuExec}
 import com.nvidia.spark.rapids.GpuMetricNames.{DESCRIPTION_TOTAL_TIME, TOTAL_TIME}
 
@@ -22,7 +24,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
-import org.apache.spark.sql.execution.{PartialMapperPartitionSpec, ShufflePartitionSpec, SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{CoalescedPartitionSpec, PartialMapperPartitionSpec, PartialReducerPartitionSpec, ShufflePartitionSpec, SparkPlan, SQLExecution, UnaryExecNode}
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchange}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -69,7 +71,29 @@ case class GpuCustomShuffleReaderExec(
     }
   }
 
-  override def stringArgs: Iterator[Any] = Iterator(description)
+  override def stringArgs: Iterator[Any] = {
+    val desc = if (isLocalReader) {
+      "local"
+    } else if (hasCoalescedPartition && hasSkewedPartition) {
+      "coalesced and skewed"
+    } else if (hasCoalescedPartition) {
+      "coalesced"
+    } else if (hasSkewedPartition) {
+      "skewed"
+    } else {
+      ""
+    }
+    Iterator(desc)
+  }
+
+  def hasCoalescedPartition: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[CoalescedPartitionSpec])
+
+  def hasSkewedPartition: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[PartialReducerPartitionSpec])
+
+  def isLocalReader: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec])
 
   private var cachedShuffleRDD: RDD[ColumnarBatch] = null
 
