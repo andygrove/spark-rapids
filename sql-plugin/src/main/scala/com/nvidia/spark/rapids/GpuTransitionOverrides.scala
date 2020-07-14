@@ -27,7 +27,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 import org.apache.spark.sql.execution.exchange.{BroadcastExchange, BroadcastExchangeExec, Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec}
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
-import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuShuffleExchangeExec}
+import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuCustomShuffleReaderExec, GpuShuffleExchangeExec}
 
 /**
  * Rules that run after the row to columnar and columnar to row transitions have been inserted.
@@ -58,6 +58,12 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       case GpuCoalesceBatches(e: GpuShuffleExchangeExec, _) =>
         // we need to insert the coalesce batches step later, after the query stage has executed
         optimizeAdaptiveTransitions(e)
+
+      case e: GpuCustomShuffleReaderExec =>
+        // this is where we re-insert the GpuCoalesceBatches that we removed from the
+        // shuffle exchange
+        GpuCoalesceBatches(e.copy(child = optimizeAdaptiveTransitions(e.child)),
+            TargetSize(Long.MaxValue))
 
       // Query stages that have already executed on the GPU could be used by CPU operators
       // in future query stages. Note that because these query stages have already executed, we
