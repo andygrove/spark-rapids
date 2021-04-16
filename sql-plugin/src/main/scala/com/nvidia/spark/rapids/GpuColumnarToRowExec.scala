@@ -27,7 +27,8 @@ import org.apache.spark.sql.catalyst.{CudfUnsafeRow, InternalRow}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.rapids.execution.GpuColumnToRowMapPartitionsRDD
+import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuBroadcastExchangeExecBase, GpuColumnToRowMapPartitionsRDD}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
@@ -238,6 +239,11 @@ object CudfRowTransitions {
 abstract class GpuColumnarToRowExecParent(child: SparkPlan, val exportColumnarRdd: Boolean)
     extends UnaryExecNode with GpuExec {
   import GpuMetric._
+
+  if (child.isInstanceOf[ReusedExchangeExec]) {
+    new RuntimeException("here!").printStackTrace()
+  }
+
   // We need to do this so the assertions don't fail
   override def supportsColumnar = false
 
