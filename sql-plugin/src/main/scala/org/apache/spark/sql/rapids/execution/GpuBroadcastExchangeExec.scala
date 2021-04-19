@@ -290,7 +290,7 @@ abstract class GpuBroadcastExchangeExecBase(
               interruptOnCancel = true)
             val collectRange = new NvtxWithMetrics("broadcast collect", NvtxColor.GREEN,
               collectTime)
-            val batch = try {
+            val batch: SerializeConcatHostBuffersDeserializeBatch = try {
               val data = child.executeColumnar().map(cb => try {
                 new SerializeBatchDeserializeHostBuffer(cb)
               } finally {

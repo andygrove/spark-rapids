@@ -21,12 +21,16 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.joins.HashedRelation
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuBroadcastExchangeExecBase}
+import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExec, GpuBroadcastExchangeExecBase, SerializeBatchDeserializeHostBuffer, SerializeConcatHostBuffersDeserializeBatch}
 
-case class GpuBroadcastColumnarToRow(
-      child: SparkPlan,
-      exportColumnarRdd: Boolean)
-    extends UnaryExecNode with GpuExec {
+/**
+ * This is a specialized version of GpuColumnarToRow that wraps a GpuBroadcastExchange and
+ * converts the columnar results containing cuDF tables into Spark rows so that the results
+ * can feed a CPU BroadcastHashJoin. This is required for exchange reuse in AQE.
+ *
+ * @param child GpuBroadcastExchange, possibly wrapped in ReusedExchangeExec
+ */
+case class GpuBroadcastColumnarToRow(child: SparkPlan) extends UnaryExecNode with GpuExec {
 
   import GpuMetric._
   // We need to do this so the assertions don't fail
@@ -40,7 +44,11 @@ case class GpuBroadcastColumnarToRow(
 
   // Override the original metrics to remove NUM_OUTPUT_BATCHES, which makes no sense.
   override lazy val allMetrics: Map[String, GpuMetric] = Map(
+    "dataSize" -> createSizeMetric(ESSENTIAL_LEVEL, "data size"),
     NUM_OUTPUT_ROWS -> createMetric(outputRowsLevel, DESCRIPTION_NUM_OUTPUT_ROWS),
+    BUILD_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_BUILD_TIME),
+    "broadcastTime" -> createNanoTimingMetric(ESSENTIAL_LEVEL, "time to broadcast"),
+    COLLECT_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_COLLECT_TIME),
     TOTAL_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_TOTAL_TIME),
     NUM_INPUT_BATCHES -> createMetric(DEBUG_LEVEL, DESCRIPTION_NUM_INPUT_BATCHES))
 
@@ -63,21 +71,18 @@ case class GpuBroadcastColumnarToRow(
   lazy val relationFuture: Future[Broadcast[Any]] = {
     // relationFuture is used in "doExecute". Therefore we can get the execution id correctly here.
     val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-//    val numOutputBatches = gpuLongMetric(NUM_OUTPUT_BATCHES)
     val numOutputRows = gpuLongMetric(NUM_OUTPUT_ROWS)
+    val collectTime = gpuLongMetric(COLLECT_TIME)
+    val buildTime = gpuLongMetric(BUILD_TIME)
+    val broadcastTime = gpuLongMetric(BUILD_TIME)
     val totalTime = gpuLongMetric(TOTAL_TIME)
-//    val collectTime = gpuLongMetric(COLLECT_TIME)
-//    val buildTime = gpuLongMetric(BUILD_TIME)
-//    val broadcastTime = gpuLongMetric("broadcastTime")
 
-
-    val b = child match {
+    val broadcast = child match {
       case ReusedExchangeExec(_, b: GpuBroadcastExchangeExecBase) => b
       case b: GpuBroadcastExchangeExecBase => b
-      case _ => throw new IllegalStateException()
+      case _ => throw new IllegalStateException(
+        s"GpuBroadcastColumnarToRow has unsupported child plan: ${child.getClass}")
     }
-
-    val realChild = b.child
 
     val task = new Callable[Broadcast[Any]]() {
       override def call(): Broadcast[Any] = {
@@ -89,50 +94,66 @@ case class GpuBroadcastColumnarToRow(
             // Setup a job group here so later it may get cancelled by groupId if necessary.
             sparkContext.setJobGroup(_runId.toString, s"broadcast exchange (runId ${_runId})",
               interruptOnCancel = true)
-            val collectRange = new NvtxWithMetrics("broadcast collect", NvtxColor.GREEN,
-              NoopMetric)
 
             val f = GpuColumnarToRowExecParent
-                .makeIteratorFunc(child.output, numOutputRows, NoopMetric, totalTime)
+                .makeIteratorFunc(broadcast.child.output, numOutputRows, NoopMetric, totalTime)
 
-            val rows = try {
-              val rdd = realChild.executeColumnar()
-              val data = rdd.map { cb =>
-                val rows = f(Seq(cb).iterator)
-                val seq = rows.toSeq
-                seq
-              }
-              data.collect().flatten
+            val collectRange = new NvtxWithMetrics("broadcast collect", NvtxColor.GREEN,
+              collectTime)
+            val serializedBatch: SerializeConcatHostBuffersDeserializeBatch = try {
+              val data = broadcast.child.executeColumnar().map(cb => try {
+                new SerializeBatchDeserializeHostBuffer(cb)
+              } finally {
+                cb.close()
+              })
+              val d = data.collect()
+              new SerializeConcatHostBuffersDeserializeBatch(d, output)
             } finally {
               collectRange.close()
             }
 
-            // Construct the relation.
-            val relation = b.mode.transform(rows)
-
-            val dataSize = relation match {
-              case map: HashedRelation =>
-                map.estimatedSize
-              case arr: Array[InternalRow] =>
-                arr.map(_.asInstanceOf[UnsafeRow].getSizeInBytes.toLong).sum
-              case _ =>
-                throw new SparkException("[BUG] BroadcastMode.transform returned unexpected " +
-                    s"type: ${relation.getClass.getName}")
-            }
-
-          //  longMetric("dataSize") += dataSize
-            if (dataSize >= MAX_BROADCAST_TABLE_BYTES) {
+            val batch = serializedBatch.batch
+            val numRows = batch.numRows
+            if (numRows >= 512000000) {
               throw new SparkException(
-                s"Cannot broadcast the table that is larger than 8GB: ${dataSize >> 30} GB")
+                s"Cannot broadcast the table with 512 million or more rows: $numRows rows")
+            }
+            numOutputRows += numRows
+
+            val buildRange = new NvtxWithMetrics("broadcast build", NvtxColor.DARK_GREEN, buildTime)
+            val relation = try {
+              val rows = f(Seq(batch).iterator).toArray
+
+              // Construct the relation.
+              val relation = broadcast.mode.transform(rows)
+
+              val dataSize = relation match {
+                case map: HashedRelation =>
+                  map.estimatedSize
+                case arr: Array[InternalRow] =>
+                  arr.map(_.asInstanceOf[UnsafeRow].getSizeInBytes.toLong).sum
+                case _ =>
+                  throw new SparkException("[BUG] BroadcastMode.transform returned unexpected " +
+                      s"type: ${relation.getClass.getName}")
+              }
+              longMetric("dataSize") += dataSize
+              if (dataSize >= MAX_BROADCAST_TABLE_BYTES) {
+                throw new SparkException(
+                  s"Cannot broadcast the table that is larger than 8GB: ${dataSize >> 30} GB")
+              }
+              relation
+            } finally {
+              buildRange.close()
             }
 
-      //      val beforeBroadcast = System.nanoTime()
-          //  longMetric("buildTime") += NANOSECONDS.toMillis(beforeBroadcast - beforeBuild)
+            val broadcastRange = new NvtxWithMetrics("broadcast", NvtxColor.CYAN, broadcastTime)
+            val broadcasted = try {
+              // Broadcast the relation
+              sparkContext.broadcast(relation)
+            } finally {
+              broadcastRange.close()
+            }
 
-            // Broadcast the relation
-            val broadcasted = sparkContext.broadcast(relation)
-        ////    longMetric("broadcastTime") += NANOSECONDS.toMillis(
-       //       System.nanoTime() - beforeBroadcast)
             val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
             SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, metrics.values.toSeq)
             promise.trySuccess(broadcasted)

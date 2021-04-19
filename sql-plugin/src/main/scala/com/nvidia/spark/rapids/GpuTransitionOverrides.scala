@@ -148,7 +148,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
          */
         e.plan match {
           case ReusedExchangeExec(_, b: GpuBroadcastExchangeExecBase) =>
-            GpuBroadcastColumnarToRow(b, false)
+            GpuBroadcastColumnarToRow(b)
           case _ => getColumnarToRowExec(e)
         }
 
