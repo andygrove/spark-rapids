@@ -8,13 +8,13 @@ import scala.util.control.NonFatal
 
 import ai.rapids.cudf.NvtxColor
 import com.nvidia.spark.rapids.{GpuColumnarToRowExecParent, GpuExec, GpuMetric, MetricRange, NoopMetric, NvtxWithMetrics}
-
 import org.apache.spark.SparkException
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.launcher.SparkLauncher
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec.MAX_BROADCAST_TABLE_BYTES
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
@@ -122,7 +122,8 @@ case class GpuBroadcastColumnarToRow(child: SparkPlan) extends UnaryExecNode wit
 
             val buildRange = new NvtxWithMetrics("broadcast build", NvtxColor.DARK_GREEN, buildTime)
             val relation = try {
-              val rows = f(Seq(batch).iterator).toArray
+              val toUnsafe = UnsafeProjection.create(output, output)
+              val rows = f(Seq(batch).iterator).map(toUnsafe).toArray
 
               // Construct the relation.
               val relation = broadcast.mode.transform(rows)
