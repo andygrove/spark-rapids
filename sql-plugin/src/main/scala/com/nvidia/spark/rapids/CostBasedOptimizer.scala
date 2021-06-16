@@ -17,13 +17,13 @@
 package com.nvidia.spark.rapids
 
 import scala.collection.mutable.ListBuffer
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetStructField, WindowFrame, WindowSpecDefinition}
 import org.apache.spark.sql.catalyst.plans.{JoinType, LeftAnti, LeftSemi}
 import org.apache.spark.sql.execution.{GlobalLimitExec, LocalLimitExec, SparkPlan, TakeOrderedAndProjectExec, UnionExec}
-import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, QueryStageExec}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, CustomShuffleReaderExec, QueryStageExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec, ShuffledHashJoinExec, SortMergeJoinExec}
 import org.apache.spark.sql.internal.SQLConf
@@ -112,6 +112,8 @@ class CostBasedOptimizer extends Optimizer with Logging {
     // determine how many transitions between CPU and GPU are taking place between
     // the child operators and this operator
     val numTransitions = plan.childPlans
+      // we don't assume that AdaptiveSparkPlanExec is a CPU plan
+      .filterNot(_.wrapped.isInstanceOf[AdaptiveSparkPlanExec])
       .count(_.canThisBeReplaced != plan.canThisBeReplaced)
 
     if (numTransitions > 0) {
@@ -121,6 +123,14 @@ class CostBasedOptimizer extends Optimizer with Logging {
 
       // is this operator on the GPU?
       if (plan.canThisBeReplaced) {
+
+        // Transitioning to GPU class org.apache.spark.sql.execution.command.DataWritingCommandExec
+        // from CPU class org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
+        plan.childPlans.foreach { child =>
+          println(s"Transitioning to GPU ${plan.wrapped.getClass} " +
+            s"from CPU ${child.wrapped.getClass}")
+        }
+
         // at least one child is transitioning from CPU to GPU so we calculate the
         // transition costs
         val transitionCost = plan.childPlans.filter(!_.canThisBeReplaced)
@@ -296,6 +306,17 @@ class CpuCostModel(conf: RapidsConf) extends CostModel {
 class GpuCostModel(conf: RapidsConf) extends CostModel {
 
   def getCost(plan: SparkPlanMeta[_]): Double = {
+
+    println(s"getCost ${plan.getClass} -> ${plan.wrapped.getClass}")
+
+    plan.wrapped match {
+      case DataWritingCommandExec(_, a: AdaptiveSparkPlanExec) =>
+        println("special case 1")
+      case DataWritingCommandExec(_, child) =>
+        println(s"special case 2: ${child.getClass}")
+      case _ =>
+    }
+
     val rowCount = RowCountPlanVisitor.visit(plan).map(_.toDouble)
       .getOrElse(conf.defaultRowCount.toDouble)
 
