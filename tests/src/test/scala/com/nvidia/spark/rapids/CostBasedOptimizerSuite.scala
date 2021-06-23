@@ -63,6 +63,60 @@ class CostBasedOptimizerSuite extends SparkQueryCompareTestSuite
     assert(0.5d === MemoryCostHelper.calculateCost(GIGABYTE, 2) +- 0.01)
   }
 
+  test("Avoid transition to CPU for trivial projection after GPU BHJ") {
+    logError("Avoid transition to CPU for trivial projection after GPU BHJ")
+
+    val conf = createDefaultConf()
+      .set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "true")
+      .set(RapidsConf.TEST_ALLOWED_NONGPU.key,
+        "ProjectExec,BroadcastExchangeExec,BroadcastHashJoinExec,SortExec,SortMergeJoinExec," +
+          "Alias,Cast,LessThan,ShuffleExchangeExec,RangePartitioning,HashPartitioning," +
+          "ShuffleExchangeExec")
+
+    val optimizations: ListBuffer[Seq[Optimization]] = new ListBuffer[Seq[Optimization]]()
+    GpuOverrides.addListener(
+      (_: SparkPlanMeta[SparkPlan],
+       _: SparkPlan,
+       costOptimizations: Seq[Optimization]) => {
+        optimizations += costOptimizations
+      })
+
+    withGpuSparkSession(spark => {
+      val df1: DataFrame = createQuery(spark)
+        .alias("df1")
+        .orderBy("more_strings_1")
+      val df2: DataFrame = createQuery(spark)
+        .alias("df2")
+        .orderBy("more_strings_2")
+      val df = df1.join(df2, col("df1.more_strings_1").equalTo(col("df2.more_strings_2")))
+        .orderBy("df2.more_strings_2")
+
+      df.collect()
+
+      println(df.queryExecution.executedPlan)
+
+//      val avoided = getAvoidedTransitions(optimizations)
+//      assert(avoided.nonEmpty)
+//      assert(avoided.forall(_.toString.startsWith(
+//        "It is not worth moving to GPU for operator: Project [more_strings_2")))
+//
+//      val cpuPlans = PlanUtils.findOperators(df.queryExecution.executedPlan,
+//        _.isInstanceOf[WholeStageCodegenExec])
+//        .map(_.asInstanceOf[WholeStageCodegenExec])
+//
+//      assert(cpuPlans.size === 1)
+//      assert(cpuPlans.head
+//        .asInstanceOf[WholeStageCodegenExec]
+//        .child
+//        .asInstanceOf[ProjectExec]
+//        .child
+//        .isInstanceOf[SortMergeJoinExec])
+
+      df
+    }, conf)
+
+  }
+
   test("Avoid transition to GPU for trivial projection after CPU SMJ") {
     logError("Avoid transition to GPU for trivial projection after CPU SMJ")
 

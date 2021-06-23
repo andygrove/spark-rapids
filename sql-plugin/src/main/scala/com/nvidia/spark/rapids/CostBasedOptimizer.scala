@@ -60,10 +60,16 @@ class CostBasedOptimizer extends Optimizer with Logging {
    * @return A list of optimizations that were applied
    */
   def optimize(conf: RapidsConf, plan: SparkPlanMeta[SparkPlan]): Seq[Optimization] = {
+    println("----------------")
+    println("BEGIN optimize()")
+    println("----------------")
     val cpuCostModel = new CpuCostModel(conf)
     val gpuCostModel = new GpuCostModel(conf)
     val optimizations = new ListBuffer[Optimization]()
     recursivelyOptimize(conf, cpuCostModel, gpuCostModel, plan, optimizations, finalOperator = true)
+    println("----------------")
+    println("END optimize()")
+    println("----------------")
     optimizations
   }
 
@@ -90,8 +96,10 @@ class CostBasedOptimizer extends Optimizer with Logging {
     val operatorCpuCost = cpuCostModel.getCost(plan)
     val operatorGpuCost = gpuCostModel.getCost(plan)
 
-    // get the CPU and GPU cost of the child plan(s)
+    // get the CPU and GPU cost of the child plan(s) but excluding
+    // query stages that have already completed
     val childCosts = plan.childPlans
+      .filterNot(_.wrapped.isInstanceOf[QueryStageExec])
       .map(child => recursivelyOptimize(
         conf,
         cpuCostModel,
@@ -214,7 +222,7 @@ class CostBasedOptimizer extends Optimizer with Logging {
     } else {
       ">"
     }
-    logTrace(s"CBO [${plan.wrapped.getClass.getSimpleName}] $message: " +
+    println(s"CBO [${plan.wrapped.getClass.getSimpleName}] $message: " +
       s"cpuCost=$cpuCost $sign gpuCost=$gpuCost)")
   }
 
