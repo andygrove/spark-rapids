@@ -82,14 +82,23 @@ class CostBasedOptimizerSuite extends SparkQueryCompareTestSuite
       })
 
     withGpuSparkSession(spark => {
-      val df1: DataFrame = createQuery(spark)
-        .alias("df1")
-        .orderBy("more_strings_1")
-      val df2: DataFrame = createQuery(spark)
-        .alias("df2")
-        .orderBy("more_strings_2")
-      val df = df1.join(df2, col("df1.more_strings_1").equalTo(col("df2.more_strings_2")))
-        .orderBy("df2.more_strings_2")
+      val df1 = nullableStringsDf(spark)
+        .repartition(2)
+        .withColumnRenamed("more_strings", "more_strings_1")
+
+      val df2 = nullableStringsDf(spark)
+        .repartition(2)
+        .withColumnRenamed("more_strings", "more_strings_2")
+
+      val df3 = nullableStringsDf(spark)
+        .repartition(2)
+        .withColumnRenamed("more_strings", "more_strings_3")
+
+      // nested hash join
+      val df = df1.join(df2, "strings").join(df3, "strings")
+        .filter(col("more_strings_2")
+          .lt(col("more_strings_1")))
+        .select("more_strings_3", "more_strings_2", "more_strings_1")
 
       df.collect()
 

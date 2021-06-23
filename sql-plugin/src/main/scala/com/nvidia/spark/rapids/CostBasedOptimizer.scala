@@ -232,6 +232,10 @@ class CostBasedOptimizer extends Optimizer with Logging {
       // there are no child plans to inspect, so we just assume that the plan is running
       // on GPU
       true
+    case q: QueryStageExec =>
+      // query stages have already executed, so we see if they are columnar (which
+      // currently means they ran on GPU)
+      q.supportsColumnar
     case _ => plan.canThisBeReplaced
   }
 
