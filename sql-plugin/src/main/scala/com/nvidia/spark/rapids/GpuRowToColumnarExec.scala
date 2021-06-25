@@ -554,7 +554,9 @@ class RowToColumnarIterator(
     totalTime: GpuMetric = NoopMetric,
     numInputRows: GpuMetric = NoopMetric,
     numOutputRows: GpuMetric = NoopMetric,
-    numOutputBatches: GpuMetric = NoopMetric) extends Iterator[ColumnarBatch] with Arm {
+    numOutputBatches: GpuMetric = NoopMetric,
+    semaphoreWaitTime: GpuMetric = NoopMetric,
+    opTime: GpuMetric = NoopMetric) extends Iterator[ColumnarBatch] with Arm {
 
   private val targetSizeBytes = localGoal.targetSizeBytes
   private var targetRows = 0
@@ -572,62 +574,66 @@ class RowToColumnarIterator(
 
   private def buildBatch(): ColumnarBatch = {
 
-    // estimate the size of the first batch based on the schema
-    if (targetRows == 0) {
-      if (localSchema.fields.isEmpty) {
-        // if there are no columns then we just default to a small number
-        // of rows for the first batch
-        targetRows = 1024
-      } else {
-        val sampleRows = GpuBatchUtils.VALIDITY_BUFFER_BOUNDARY_ROWS
-        val sampleBytes = GpuBatchUtils.estimateGpuMemory(localSchema, sampleRows)
-        targetRows = GpuBatchUtils.estimateRowCount(targetSizeBytes, sampleBytes, sampleRows)
-      }
-    }
+    withResource(new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, totalTime)) { _ =>
 
-    val builders = new GpuColumnarBatchBuilder(localSchema, targetRows)
-    try {
-      var rowCount = 0
-      // Double because validity can be < 1 byte, and this is just an estimate anyways
-      var byteCount: Double = 0
-      // read at least one row
-      while (rowIter.hasNext &&
-        (rowCount == 0 || rowCount < targetRows && byteCount < targetSizeBytes)) {
-        val row = rowIter.next()
-        byteCount += converters.convert(row, builders)
-        rowCount += 1
+      // estimate the size of the first batch based on the schema
+      if (targetRows == 0) {
+        if (localSchema.fields.isEmpty) {
+          // if there are no columns then we just default to a small number
+          // of rows for the first batch
+          targetRows = 1024
+        } else {
+          val sampleRows = GpuBatchUtils.VALIDITY_BUFFER_BOUNDARY_ROWS
+          val sampleBytes = GpuBatchUtils.estimateGpuMemory(localSchema, sampleRows)
+          targetRows = GpuBatchUtils.estimateRowCount(targetSizeBytes, sampleBytes, sampleRows)
+        }
       }
 
-      // enforce RequireSingleBatch limit
-      if (rowIter.hasNext && localGoal == RequireSingleBatch) {
-        throw new IllegalStateException("A single batch is required for this operation." +
-          " Please try increasing your partition count.")
+      val builders = new GpuColumnarBatchBuilder(localSchema, targetRows)
+      try {
+        var rowCount = 0
+        // Double because validity can be < 1 byte, and this is just an estimate anyways
+        var byteCount: Double = 0
+        // read at least one row
+        while (rowIter.hasNext &&
+          (rowCount == 0 || rowCount < targetRows && byteCount < targetSizeBytes)) {
+          val row = rowIter.next()
+          byteCount += converters.convert(row, builders)
+          rowCount += 1
+        }
+
+        // enforce RequireSingleBatch limit
+        if (rowIter.hasNext && localGoal == RequireSingleBatch) {
+          throw new IllegalStateException("A single batch is required for this operation." +
+            " Please try increasing your partition count.")
+        }
+
+        // About to place data back on the GPU
+        // note that TaskContext.get() can return null during unit testing so we wrap it in an
+        // option here
+        Option(TaskContext.get())
+          .foreach(ctx => GpuSemaphore.acquireIfNecessary(ctx, semaphoreWaitTime))
+
+        val ret = withResource(new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, opTime)) { _ =>
+          builders.build(rowCount)
+        }
+        numInputRows += rowCount
+        numOutputRows += rowCount
+        numOutputBatches += 1
+
+        // refine the targetRows estimate based on the average of all batches processed so far
+        totalOutputBytes += GpuColumnVector.getTotalDeviceMemoryUsed(ret)
+        totalOutputRows += rowCount
+        if (totalOutputRows > 0 && totalOutputBytes > 0) {
+          targetRows =
+            GpuBatchUtils.estimateRowCount(targetSizeBytes, totalOutputBytes, totalOutputRows)
+        }
+
+        // The returned batch will be closed by the consumer of it
+        ret
+      } finally {
+        builders.close()
       }
-
-      // About to place data back on the GPU
-      // note that TaskContext.get() can return null during unit testing so we wrap it in an
-      // option here
-      Option(TaskContext.get()).foreach(GpuSemaphore.acquireIfNecessary)
-
-      val ret = withResource(new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, totalTime)) { _=>
-        builders.build(rowCount)
-      }
-      numInputRows += rowCount
-      numOutputRows += rowCount
-      numOutputBatches += 1
-
-      // refine the targetRows estimate based on the average of all batches processed so far
-      totalOutputBytes += GpuColumnVector.getTotalDeviceMemoryUsed(ret)
-      totalOutputRows += rowCount
-      if (totalOutputRows > 0 && totalOutputBytes > 0) {
-        targetRows =
-          GpuBatchUtils.estimateRowCount(targetSizeBytes, totalOutputBytes, totalOutputRows)
-      }
-
-      // The returned batch will be closed by the consumer of it
-      ret
-    } finally {
-      builders.close()
     }
   }
 }
@@ -636,7 +642,8 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
   def apply(input: Iterator[UnsafeRow],
       schema: Array[Attribute],
       goal: CoalesceSizeGoal,
-      totalTime: GpuMetric,
+      semaphoreWaitTime: GpuMetric,
+      gpuOpTime: GpuMetric,
       numInputRows: GpuMetric,
       numOutputRows: GpuMetric,
       numOutputBatches: GpuMetric): UnsafeRowToColumnarBatchIterator = {
@@ -645,7 +652,8 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
     ctx.addReferenceObj("iter", input, classOf[Iterator[UnsafeRow]].getName)
     ctx.addReferenceObj("schema", schema, classOf[Array[Attribute]].getName)
     ctx.addReferenceObj("goal", goal, classOf[CoalesceSizeGoal].getName)
-    ctx.addReferenceObj("totalTime", totalTime, classOf[GpuMetric].getName)
+    ctx.addReferenceObj("semaphoreWaitTime", semaphoreWaitTime, classOf[GpuMetric].getName)
+    ctx.addReferenceObj("gpuOpTime", gpuOpTime, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numInputRows", numInputRows, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numOutputRows", numOutputRows, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numOutputBatches", numOutputBatches, classOf[GpuMetric].getName)
@@ -715,7 +723,8 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
          |      (com.nvidia.spark.rapids.GpuMetric)references[3],
          |      (com.nvidia.spark.rapids.GpuMetric)references[4],
          |      (com.nvidia.spark.rapids.GpuMetric)references[5],
-         |      (com.nvidia.spark.rapids.GpuMetric)references[6]);
+         |      (com.nvidia.spark.rapids.GpuMetric)references[6],
+         |      (com.nvidia.spark.rapids.GpuMetric)references[7]);
          |    ${ctx.initMutableStates()}
          |  }
          |
@@ -806,6 +815,8 @@ case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceSizeGoal)
   }
 
   override lazy val additionalMetrics: Map[String, GpuMetric] = Map(
+    "semaphoreWait" -> createNanoTimingMetric(MODERATE_LEVEL, "Semaphore wait time"),
+    GPU_OP_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_GPU_OP_TIME),
     TOTAL_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_TOTAL_TIME),
     NUM_INPUT_ROWS -> createMetric(DEBUG_LEVEL, DESCRIPTION_NUM_INPUT_ROWS)
   )
@@ -817,6 +828,8 @@ case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceSizeGoal)
     val numOutputBatches = gpuLongMetric(NUM_OUTPUT_BATCHES)
     val numOutputRows = gpuLongMetric(NUM_OUTPUT_ROWS)
     val totalTime = gpuLongMetric(TOTAL_TIME)
+    val gpuOpTime = gpuLongMetric(GPU_OP_TIME)
+    val semaphoreWaitTime = gpuLongMetric("semaphoreWait")
     val localGoal = goal
     val rowBased = child.execute()
 
@@ -831,13 +844,13 @@ case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceSizeGoal)
       val localOutput = output
       rowBased.mapPartitions(rowIter => GeneratedUnsafeRowToCudfRowIterator(
         rowIter.asInstanceOf[Iterator[UnsafeRow]],
-        localOutput.toArray, localGoal, totalTime, numInputRows, numOutputRows,
+        localOutput.toArray, localGoal, semaphoreWaitTime, gpuOpTime, numInputRows, numOutputRows,
         numOutputBatches))
     } else {
       val converters = new GpuRowToColumnConverter(localSchema)
       rowBased.mapPartitions(rowIter => new RowToColumnarIterator(rowIter,
         localSchema, localGoal, converters,
-        totalTime, numInputRows, numOutputRows, numOutputBatches))
+        totalTime, numInputRows, numOutputRows, numOutputBatches, semaphoreWaitTime, gpuOpTime))
     }
   }
 }

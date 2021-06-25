@@ -49,7 +49,8 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
   protected final long dataLength;
   protected final DType[] rapidsTypes;
   protected final DataType[] outputTypes;
-  protected final GpuMetric totalTime;
+  protected final GpuMetric semaphoreWaitTime;
+  protected final GpuMetric gpuOpTime;
   protected final GpuMetric numInputRows;
   protected final GpuMetric numOutputRows;
   protected final GpuMetric numOutputBatches;
@@ -58,7 +59,8 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
       Iterator<UnsafeRow> input,
       Attribute[] schema,
       CoalesceSizeGoal goal,
-      GpuMetric totalTime,
+      GpuMetric semaphoreWaitTime,
+      GpuMetric gpuOpTime,
       GpuMetric numInputRows,
       GpuMetric numOutputRows,
       GpuMetric numOutputBatches) {
@@ -74,7 +76,8 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
       rapidsTypes[i] = GpuColumnVector.getNonNestedRapidsType(schema[i].dataType());
       outputTypes[i] = schema[i].dataType();
     }
-    this.totalTime = totalTime;
+    this.semaphoreWaitTime = semaphoreWaitTime;
+    this.gpuOpTime = gpuOpTime;
     this.numInputRows = numInputRows;
     this.numOutputRows = numOutputRows;
     this.numOutputBatches = numOutputBatches;
@@ -135,10 +138,10 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
         // Grab the semaphore because we are about to put data onto the GPU.
         TaskContext tc = TaskContext.get();
         if (tc != null) {
-          GpuSemaphore$.MODULE$.acquireIfNecessary(tc);
+          GpuSemaphore$.MODULE$.acquireIfNecessary(tc, semaphoreWaitTime);
         }
-        if (totalTime != null) {
-          buildRange = new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, totalTime);
+        if (gpuOpTime != null) {
+          buildRange = new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, gpuOpTime);
         } else {
           buildRange = new NvtxRange("RowToColumnar", NvtxColor.GREEN);
         }
