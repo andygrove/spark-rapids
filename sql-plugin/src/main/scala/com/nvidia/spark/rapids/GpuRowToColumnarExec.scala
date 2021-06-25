@@ -644,6 +644,7 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
       goal: CoalesceSizeGoal,
       semaphoreWaitTime: GpuMetric,
       gpuOpTime: GpuMetric,
+      totalTime: GpuMetric,
       numInputRows: GpuMetric,
       numOutputRows: GpuMetric,
       numOutputBatches: GpuMetric): UnsafeRowToColumnarBatchIterator = {
@@ -654,6 +655,7 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
     ctx.addReferenceObj("goal", goal, classOf[CoalesceSizeGoal].getName)
     ctx.addReferenceObj("semaphoreWaitTime", semaphoreWaitTime, classOf[GpuMetric].getName)
     ctx.addReferenceObj("gpuOpTime", gpuOpTime, classOf[GpuMetric].getName)
+    ctx.addReferenceObj("totalTime", totalTime, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numInputRows", numInputRows, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numOutputRows", numOutputRows, classOf[GpuMetric].getName)
     ctx.addReferenceObj("numOutputBatches", numOutputBatches, classOf[GpuMetric].getName)
@@ -724,7 +726,8 @@ object GeneratedUnsafeRowToCudfRowIterator extends Logging {
          |      (com.nvidia.spark.rapids.GpuMetric)references[4],
          |      (com.nvidia.spark.rapids.GpuMetric)references[5],
          |      (com.nvidia.spark.rapids.GpuMetric)references[6],
-         |      (com.nvidia.spark.rapids.GpuMetric)references[7]);
+         |      (com.nvidia.spark.rapids.GpuMetric)references[7],
+         |      (com.nvidia.spark.rapids.GpuMetric)references[8]);
          |    ${ctx.initMutableStates()}
          |  }
          |
@@ -815,7 +818,7 @@ case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceSizeGoal)
   }
 
   override lazy val additionalMetrics: Map[String, GpuMetric] = Map(
-    "semaphoreWait" -> createNanoTimingMetric(MODERATE_LEVEL, "Semaphore wait time"),
+    "semaphoreWait" -> createNanoTimingMetric(DEBUG_LEVEL, "Semaphore wait time"),
     GPU_OP_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_GPU_OP_TIME),
     TOTAL_TIME -> createNanoTimingMetric(MODERATE_LEVEL, DESCRIPTION_TOTAL_TIME),
     NUM_INPUT_ROWS -> createMetric(DEBUG_LEVEL, DESCRIPTION_NUM_INPUT_ROWS)
@@ -844,8 +847,8 @@ case class GpuRowToColumnarExec(child: SparkPlan, goal: CoalesceSizeGoal)
       val localOutput = output
       rowBased.mapPartitions(rowIter => GeneratedUnsafeRowToCudfRowIterator(
         rowIter.asInstanceOf[Iterator[UnsafeRow]],
-        localOutput.toArray, localGoal, semaphoreWaitTime, gpuOpTime, numInputRows, numOutputRows,
-        numOutputBatches))
+        localOutput.toArray, localGoal, semaphoreWaitTime, gpuOpTime, totalTime,
+        numInputRows, numOutputRows, numOutputBatches))
     } else {
       val converters = new GpuRowToColumnConverter(localSchema)
       rowBased.mapPartitions(rowIter => new RowToColumnarIterator(rowIter,

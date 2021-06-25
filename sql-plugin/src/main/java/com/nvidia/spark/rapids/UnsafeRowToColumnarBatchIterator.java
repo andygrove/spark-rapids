@@ -51,6 +51,7 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
   protected final DataType[] outputTypes;
   protected final GpuMetric semaphoreWaitTime;
   protected final GpuMetric gpuOpTime;
+  protected final GpuMetric totalTime;
   protected final GpuMetric numInputRows;
   protected final GpuMetric numOutputRows;
   protected final GpuMetric numOutputBatches;
@@ -61,6 +62,7 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
       CoalesceSizeGoal goal,
       GpuMetric semaphoreWaitTime,
       GpuMetric gpuOpTime,
+      GpuMetric totalTime,
       GpuMetric numInputRows,
       GpuMetric numOutputRows,
       GpuMetric numOutputBatches) {
@@ -78,6 +80,7 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
     }
     this.semaphoreWaitTime = semaphoreWaitTime;
     this.gpuOpTime = gpuOpTime;
+    this.totalTime = totalTime;
     this.numInputRows = numInputRows;
     this.numOutputRows = numOutputRows;
     this.numOutputBatches = numOutputBatches;
@@ -103,7 +106,8 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
     // buffers.  One will be for the byte data and the second will be for the offsets. We will then
     // write the data directly into those buffers using code generation in a child of this class.
     // that implements fillBatch.
-    try (HostMemoryBuffer dataBuffer = HostMemoryBuffer.allocate(dataLength);
+    try (NvtxWithMetrics nvtx = new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, totalTime);
+         HostMemoryBuffer dataBuffer = HostMemoryBuffer.allocate(dataLength);
          HostMemoryBuffer offsetsBuffer =
              HostMemoryBuffer.allocate(((long)numRowsEstimate + 1) * BYTES_PER_OFFSET)) {
 
@@ -141,9 +145,9 @@ public abstract class UnsafeRowToColumnarBatchIterator implements Iterator<Colum
           GpuSemaphore$.MODULE$.acquireIfNecessary(tc, semaphoreWaitTime);
         }
         if (gpuOpTime != null) {
-          buildRange = new NvtxWithMetrics("RowToColumnar", NvtxColor.GREEN, gpuOpTime);
+          buildRange = new NvtxWithMetrics("RowToColumnar: build", NvtxColor.GREEN, gpuOpTime);
         } else {
-          buildRange = new NvtxRange("RowToColumnar", NvtxColor.GREEN);
+          buildRange = new NvtxRange("RowToColumnar: build", NvtxColor.GREEN);
         }
         devColumn = hostColumn.copyToDevice();
       }
