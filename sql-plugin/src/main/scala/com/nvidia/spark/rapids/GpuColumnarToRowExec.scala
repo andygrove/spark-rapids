@@ -18,15 +18,14 @@ package com.nvidia.spark.rapids
 
 import scala.annotation.tailrec
 import scala.collection.mutable.Queue
-
 import ai.rapids.cudf.{HostColumnVector, NvtxColor, Table}
 import com.nvidia.spark.rapids.GpuColumnarToRowExecParent.makeIteratorFunc
-
 import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.{CudfUnsafeRow, InternalRow}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.rapids.execution.GpuColumnToRowMapPartitionsRDD
 import org.apache.spark.sql.types._
@@ -292,13 +291,18 @@ abstract class GpuColumnarToRowExecParent(child: SparkPlan, val exportColumnarRd
 
     val f = makeIteratorFunc(child.output, numOutputRows, numInputBatches, opTime, collectTime)
 
-    val cdata = child.executeColumnar()
-    if (exportColumnarRdd) {
-      // If we are exporting columnar rdd we need an easy way for the code that walks the
-      // RDDs to know where the columnar to row transition is happening.
-      GpuColumnToRowMapPartitionsRDD.mapPartitions(cdata, f)
-    } else {
-      cdata.mapPartitions(f)
+    child match {
+      case a: AdaptiveSparkPlanExec if !ShimLoader.getSparkShims.isAdaptiveFinalPlanColumnar(a) =>
+        a.execute()
+      case _ =>
+        val cdata = child.executeColumnar()
+        if (exportColumnarRdd) {
+          // If we are exporting columnar rdd we need an easy way for the code that walks the
+          // RDDs to know where the columnar to row transition is happening.
+          GpuColumnToRowMapPartitionsRDD.mapPartitions(cdata, f)
+        } else {
+          cdata.mapPartitions(f)
+        }
     }
   }
 }

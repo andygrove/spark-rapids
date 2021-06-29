@@ -3107,8 +3107,12 @@ case class GpuQueryStagePrepOverrides() extends Rule[SparkPlan] with Logging {
 
 case class GpuFinalStagePrepOverrides() extends Rule[SparkPlan] with Logging {
   override def apply(plan: SparkPlan) :SparkPlan = {
-    println(s"GpuFinalStagePrepOverrides: ${plan}")
-    plan
+    //println(s"GpuFinalStagePrepOverrides: ${plan}")
+    // strip out any root transition - keep adaptive plans columnar
+    plan match {
+      case GpuColumnarToRowExec(child, _) => child
+      case _ => plan
+    }
   }
 }
 

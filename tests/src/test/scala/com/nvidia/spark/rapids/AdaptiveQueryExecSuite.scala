@@ -56,12 +56,12 @@ class AdaptiveQueryExecSuite
       spark: SparkSession, query: String): (SparkPlan, SparkPlan) = {
 
     val dfAdaptive = spark.sql(query)
-    val planBefore = dfAdaptive.queryExecution.executedPlan
+    val planBefore = dfAdaptive.queryExecution.executedPlan.children.head
     // isFinalPlan is a private field so we have to use toString to access it
     assert(planBefore.toString.startsWith("AdaptiveSparkPlan isFinalPlan=false"))
 
     dfAdaptive.collect()
-    val planAfter = dfAdaptive.queryExecution.executedPlan
+    val planAfter = dfAdaptive.queryExecution.executedPlan.children.head
     // isFinalPlan is a private field so we have to use toString to access it
     assert(planAfter.toString.startsWith("AdaptiveSparkPlan isFinalPlan=true"))
     val adaptivePlan = planAfter.asInstanceOf[AdaptiveSparkPlanExec].executedPlan

@@ -149,6 +149,9 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         case other => getColumnarToRowExec(other)
       }
 
+    case p: AdaptiveSparkPlanExec =>
+      GpuColumnarToRowExec(p, false)
+
     case p =>
       p.withNewChildren(p.children.map(c => optimizeAdaptiveTransitions(c, Some(p))))
   }
