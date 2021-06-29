@@ -20,6 +20,9 @@ import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.shims.spark312.Spark312Shims
 import com.nvidia.spark.rapids.spark313.RapidsShuffleManager
 
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.SparkSessionExtensions
+
 class Spark313Shims extends Spark312Shims {
 
   override def getSparkShimVersion: ShimVersion = SparkShimServiceProvider.VERSION
@@ -27,4 +30,13 @@ class Spark313Shims extends Spark312Shims {
   override def getRapidsShuffleManagerClass: String = {
     classOf[RapidsShuffleManager].getCanonicalName
   }
+
+  override def injectRules(extensions: SparkSessionExtensions): Unit = {
+    extensions.injectColumnar(_ => ColumnarOverrideRules())
+    extensions.injectQueryStagePrepRule(_ => GpuQueryStagePrepOverrides())
+    extensions.injectFinalStagePrepRule(_ => GpuFinalStagePrepOverrides())
+  }
+
+  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan =
+    AvoidAdaptiveTransitionToRow(child)
 }

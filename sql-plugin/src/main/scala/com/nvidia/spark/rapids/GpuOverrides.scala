@@ -3105,6 +3105,13 @@ case class GpuQueryStagePrepOverrides() extends Rule[SparkPlan] with Logging {
   }
 }
 
+case class GpuFinalStagePrepOverrides() extends Rule[SparkPlan] with Logging {
+  override def apply(plan: SparkPlan) :SparkPlan = {
+    println(s"GpuFinalStagePrepOverrides: ${plan}")
+    plan
+  }
+}
+
 case class GpuOverrides() extends Rule[SparkPlan] with Logging {
 
   // Spark calls this method once for the whole plan when AQE is off. When AQE is on, it

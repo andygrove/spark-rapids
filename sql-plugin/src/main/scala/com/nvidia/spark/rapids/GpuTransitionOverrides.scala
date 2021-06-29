@@ -16,10 +16,6 @@
 
 package com.nvidia.spark.rapids
 
-import java.lang.reflect.Method
-
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeReference, Expression, InputFileBlockLength, InputFileBlockStart, InputFileName, SortOrder}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
@@ -31,7 +27,6 @@ import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, Exchange,
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec}
 import org.apache.spark.sql.rapids.{GpuDataSourceScanExec, GpuFileSourceScanExec, GpuInputFileBlockLength, GpuInputFileBlockStart, GpuInputFileName, GpuShuffleEnv}
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastExchangeExecBase, GpuBroadcastToCpuExec, GpuCustomShuffleReaderExec, GpuHashJoin, GpuShuffleExchangeExecBase}
-import org.apache.spark.sql.vectorized.ColumnarBatch
 
 /**
  * Rules that run after the row to columnar and columnar to row transitions have been inserted.
@@ -75,7 +70,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
           // the plan is executed and sometimes the plan will have a GpuColumnarToRowExec as the
           // final operator and we can bypass this to keep the data columnar by inserting
           // the [[AvoidAdaptiveTransitionToRow]] operator here
-          AvoidAdaptiveTransitionToRow(transition)
+          ShimLoader.getSparkShims.createAvoidAdaptiveTransitionToRow(transition)
         case _ =>
           transition
       }
@@ -487,7 +482,13 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     if (conf.isSqlEnabled) {
       var updatedPlan = insertHashOptimizeSorts(plan)
       updatedPlan = updateScansForInput(updatedPlan)
-      updatedPlan = insertColumnarFromGpu(updatedPlan)
+
+      if (Thread.currentThread().getStackTrace.exists(_.getClassName.contains("InsertAdaptive"))) {
+        println("Planning an adaptive query")
+      } else {
+        updatedPlan = insertColumnarFromGpu(updatedPlan)
+      }
+
       updatedPlan = insertCoalesce(updatedPlan)
       // only insert shuffle coalesces when using normal shuffle
       if (!GpuShuffleEnv.isRapidsShuffleEnabled) {
@@ -533,59 +534,4 @@ object GpuTransitionOverrides {
   }
 }
 
-/**
- * This operator will attempt to optimize the case when we are writing the results of
- * an adaptive query to disk so that we remove the redundant transitions from columnar
- * to row within AdaptiveSparkPlanExec followed by a row to columnar transition.
- *
- * Specifically, this is the plan we see in this case:
- *
- * {{{
- * GpuRowToColumnar(AdaptiveSparkPlanExec(GpuColumnarToRow(child))
- * }}}
- *
- * We perform this optimization at runtime rather than during planning, because when the adaptive
- * plan is being planned and executed, we don't know whether it is being called from an operation
- * that wants rows (such as CollectTailExec) or from an operation that wants columns (such as
- * GpuDataWritingCommandExec).
- *
- * Spark does not provide a mechanism for executing an adaptive plan and retrieving columnar
- * results and the internal methods that we need to call are private, so we use reflection to
- * call them.
- *
- * @param child The plan to execute
- */
-case class AvoidAdaptiveTransitionToRow(child: SparkPlan) extends UnaryExecNode with GpuExec {
 
-  override def doExecute(): RDD[InternalRow] =
-    throw new IllegalStateException(s"Row-based execution should not occur for $this")
-
-  override def output: Seq[Attribute] = child.output
-
-  override protected def doExecuteColumnar(): RDD[ColumnarBatch] = child match {
-    case GpuRowToColumnarExec(a: AdaptiveSparkPlanExec, _) =>
-      val getFinalPhysicalPlan = getPrivateMethod("getFinalPhysicalPlan")
-      val plan = getFinalPhysicalPlan.invoke(a)
-      val rdd = plan match {
-        case t: GpuColumnarToRowExec =>
-          t.child.executeColumnar()
-        case _ =>
-          child.executeColumnar()
-      }
-
-      // final UI update
-      val finalPlanUpdate = getPrivateMethod("finalPlanUpdate")
-      finalPlanUpdate.invoke(a)
-
-      rdd
-
-    case _ =>
-      child.executeColumnar()
-  }
-
-  private def getPrivateMethod(name: String): Method = {
-    val m = classOf[AdaptiveSparkPlanExec].getDeclaredMethod(name)
-    m.setAccessible(true)
-    m
-  }
-}

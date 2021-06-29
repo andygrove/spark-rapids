@@ -18,15 +18,13 @@ package com.nvidia.spark.rapids.shims.spark301
 
 import java.net.URI
 import java.nio.ByteBuffer
-
 import com.nvidia.spark.rapids._
 import org.apache.arrow.memory.ReferenceManager
 import org.apache.arrow.vector.ValueVector
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkEnv
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
@@ -632,4 +630,12 @@ abstract class SparkBaseShims extends SparkShims {
   override def hasAliasQuoteFix: Boolean = false
 
   override def hasCastFloatTimestampUpcast: Boolean = false
+
+  override def injectRules(extensions: SparkSessionExtensions): Unit = {
+    extensions.injectColumnar(_ => ColumnarOverrideRules())
+    extensions.injectQueryStagePrepRule(_ => GpuQueryStagePrepOverrides())
+  }
+
+  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan =
+    AvoidAdaptiveTransitionToRow(child)
 }

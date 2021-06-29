@@ -224,4 +224,8 @@ trait SparkShims {
   def hasAliasQuoteFix: Boolean
 
   def hasCastFloatTimestampUpcast: Boolean
+
+  def injectRules(extensions: SparkSessionExtensions)
+
+  def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan
 }
