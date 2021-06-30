@@ -19,7 +19,7 @@ package com.nvidia.spark.rapids.shims.spark313
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.shims.spark312.Spark312Shims
 import com.nvidia.spark.rapids.spark313.RapidsShuffleManager
-import org.apache.spark.sql.execution.SparkPlan
+
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 
