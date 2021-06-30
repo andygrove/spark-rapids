@@ -17,10 +17,8 @@
 package com.nvidia.spark.rapids
 
 import java.io.File
-
 import com.nvidia.spark.rapids.AdaptiveQueryExecSuite.TEST_FILES_ROOT
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Dataset, Row, SaveMode, SparkSession}
@@ -31,6 +29,7 @@ import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, Exchange,
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.functions.{col, when}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 import org.apache.spark.sql.rapids.execution.GpuCustomShuffleReaderExec
 import org.apache.spark.sql.types.{ArrayType, DecimalType, IntegerType, StructField, StructType}
 
@@ -56,12 +55,12 @@ class AdaptiveQueryExecSuite
       spark: SparkSession, query: String): (SparkPlan, SparkPlan) = {
 
     val dfAdaptive = spark.sql(query)
-    val planBefore = dfAdaptive.queryExecution.executedPlan //.children.head
+    val planBefore = dfAdaptive.queryExecution.executedPlan.children.head
     // isFinalPlan is a private field so we have to use toString to access it
     assert(planBefore.toString.startsWith("AdaptiveSparkPlan isFinalPlan=false"))
 
     dfAdaptive.collect()
-    val planAfter = dfAdaptive.queryExecution.executedPlan //.children.head
+    val planAfter = dfAdaptive.queryExecution.executedPlan.children.head
     // isFinalPlan is a private field so we have to use toString to access it
     assert(planAfter.toString.startsWith("AdaptiveSparkPlan isFinalPlan=true"))
     val adaptivePlan = planAfter.asInstanceOf[AdaptiveSparkPlanExec].executedPlan
@@ -328,17 +327,19 @@ class AdaptiveQueryExecSuite
         _.isInstanceOf[GpuDataWritingCommandExec])
       assert(writeCommand.isDefined)
 
-      // the read should be an adaptive plan
-      val adaptiveSparkPlanExec = TestUtils.findOperator(writeCommand.get,
-        _.isInstanceOf[AdaptiveSparkPlanExec])
-          .get.asInstanceOf[AdaptiveSparkPlanExec]
+      val transition = writeCommand.get.children.head
+        .asInstanceOf[GpuRowToColumnarExec]
 
-      val transition = adaptiveSparkPlanExec
-          .executedPlan
-          .asInstanceOf[GpuColumnarToRowExec]
+      // the read should be an adaptive plan with no redundant transitions
+      val adaptiveSparkPlanExec = transition
+        .child
+        .asInstanceOf[AdaptiveSparkPlanExec]
 
-      // although the plan contains a GpuColumnarToRowExec, we bypass it in
-      // AvoidAdaptiveTransitionToRow so the metrics should reflect that
+      // assert there is no transition inside the adaptive plan
+      assert(adaptiveSparkPlanExec
+        .executedPlan
+        .isInstanceOf[GpuFileSourceScanExec])
+
       assert(transition.metrics("numOutputRows").value === 0)
 
     }, conf)

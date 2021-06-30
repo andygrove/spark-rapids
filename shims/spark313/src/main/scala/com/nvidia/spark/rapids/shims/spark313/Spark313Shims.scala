@@ -21,6 +21,7 @@ import com.nvidia.spark.rapids.shims.spark312.Spark312Shims
 import com.nvidia.spark.rapids.spark313.RapidsShuffleManager
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 
 class Spark313Shims extends Spark312Shims {
@@ -34,11 +35,16 @@ class Spark313Shims extends Spark312Shims {
   override def injectRules(extensions: SparkSessionExtensions): Unit = {
     extensions.injectColumnar(_ => ColumnarOverrideRules())
     extensions.injectQueryStagePrepRule(_ => GpuQueryStagePrepOverrides())
+    // injectFinalStagePrepRule is proposed to be added in Spark version 3.2.0 and
+    // possibly back-ported to 3.0.4 and 3.1.3
     extensions.injectFinalStagePrepRule(_ => GpuFinalStagePrepOverrides())
   }
 
-//  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan =
-//    AvoidAdaptiveTransitionToRow(child)
+  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan = {
+    //TODO better docs
+    // not needed any more
+    child
+  }
 
   override def isAdaptiveFinalPlanColumnar(plan: AdaptiveSparkPlanExec): Boolean =
     plan.finalPlanSupportsColumnar()

@@ -62,8 +62,13 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       parent: Option[SparkPlan]): SparkPlan = plan match {
     // HostColumnarToGpu(RowToColumnarExec(..)) => GpuRowToColumnarExec(..)
     case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
-      val transition = GpuRowToColumnarExec(
-        optimizeAdaptiveTransitions(r2c.child, Some(r2c)), goal)
+      val x = optimizeAdaptiveTransitions(r2c.child, Some(r2c))
+
+      val transition = x match {
+        case GpuColumnarToRowExec(child, _) => GpuRowToColumnarExec(child, goal)
+        case _ => GpuRowToColumnarExec(x, goal)
+      }
+
       r2c.child match {
         case _: AdaptiveSparkPlanExec =>
           // When the input is an adaptive plan we do not get to see the GPU version until
@@ -149,8 +154,15 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         case other => getColumnarToRowExec(other)
       }
 
-//    case p: AdaptiveSparkPlanExec =>
-//      GpuColumnarToRowExec(p, false)
+    // wrap adaptive plans into transitions to row, which is a no-op if the
+    // plan will naturally produce rows
+    case p: AdaptiveSparkPlanExec =>
+      GpuColumnarToRowExec(p, exportColumnarRdd = false)
+
+    case GpuRowToColumnarExec(GpuColumnarToRowExec(child, _), _) =>
+      // TODO document this fully
+      // this happens with adaptive plan wrapped by columnar write
+      child
 
     case p =>
       p.withNewChildren(p.children.map(c => optimizeAdaptiveTransitions(c, Some(p))))

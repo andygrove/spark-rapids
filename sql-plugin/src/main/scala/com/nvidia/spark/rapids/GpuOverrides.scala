@@ -3094,7 +3094,10 @@ object GpuOverrides {
   }
 
 }
-/** Tag the initial plan when AQE is enabled */
+/**
+ * Tag the initial plan each query stage when AQE is enabled.
+ * TODO: expand documentation here
+ */
 case class GpuQueryStagePrepOverrides() extends Rule[SparkPlan] with Logging {
   override def apply(plan: SparkPlan): SparkPlan = {
     // Note that we disregard the GPU plan returned here and instead rely on side effects of
@@ -3105,12 +3108,15 @@ case class GpuQueryStagePrepOverrides() extends Rule[SparkPlan] with Logging {
   }
 }
 
+/**
+ * TODO: documentation
+ */
 case class GpuFinalStagePrepOverrides() extends Rule[SparkPlan] with Logging {
   override def apply(plan: SparkPlan): SparkPlan = {
     //println(s"GpuFinalStagePrepOverrides: ${plan}")
     // strip out any root transition - keep adaptive plans columnar
     plan match {
-//      case GpuColumnarToRowExec(child, _) => child
+      case GpuColumnarToRowExec(child, _) => child
       case _ => plan
     }
   }
