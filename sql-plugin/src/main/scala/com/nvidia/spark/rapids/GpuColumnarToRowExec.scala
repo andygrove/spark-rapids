@@ -18,8 +18,10 @@ package com.nvidia.spark.rapids
 
 import scala.annotation.tailrec
 import scala.collection.mutable.Queue
+
 import ai.rapids.cudf.{HostColumnVector, NvtxColor, Table}
 import com.nvidia.spark.rapids.GpuColumnarToRowExecParent.makeIteratorFunc
+
 import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.{CudfUnsafeRow, InternalRow}

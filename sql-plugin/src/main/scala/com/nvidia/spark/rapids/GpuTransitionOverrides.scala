@@ -149,8 +149,8 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         case other => getColumnarToRowExec(other)
       }
 
-    case p: AdaptiveSparkPlanExec =>
-      GpuColumnarToRowExec(p, false)
+//    case p: AdaptiveSparkPlanExec =>
+//      GpuColumnarToRowExec(p, false)
 
     case p =>
       p.withNewChildren(p.children.map(c => optimizeAdaptiveTransitions(c, Some(p))))
@@ -485,13 +485,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     if (conf.isSqlEnabled) {
       var updatedPlan = insertHashOptimizeSorts(plan)
       updatedPlan = updateScansForInput(updatedPlan)
-
-      if (Thread.currentThread().getStackTrace.exists(_.getClassName.contains("InsertAdaptive"))) {
-        println("Planning an adaptive query")
-      } else {
-        updatedPlan = insertColumnarFromGpu(updatedPlan)
-      }
-
+      updatedPlan = insertColumnarFromGpu(updatedPlan)
       updatedPlan = insertCoalesce(updatedPlan)
       // only insert shuffle coalesces when using normal shuffle
       if (!GpuShuffleEnv.isRapidsShuffleEnabled) {
