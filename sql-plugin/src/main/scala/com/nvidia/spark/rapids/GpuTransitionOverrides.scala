@@ -62,11 +62,16 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
       parent: Option[SparkPlan]): SparkPlan = plan match {
     // HostColumnarToGpu(RowToColumnarExec(..)) => GpuRowToColumnarExec(..)
     case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
-      val x = optimizeAdaptiveTransitions(r2c.child, Some(r2c))
+      val optimizedChild = optimizeAdaptiveTransitions(r2c.child, Some(r2c))
 
-      val transition = x match {
-        case GpuColumnarToRowExec(child, _) => GpuRowToColumnarExec(child, goal)
-        case _ => GpuRowToColumnarExec(x, goal)
+      //TODO move all of this logic into the shim layer
+
+      val transition = optimizedChild match {
+        case GpuColumnarToRowExec(child, _) =>
+          // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
+          GpuRowToColumnarExec(child, goal)
+        case _ =>
+          GpuRowToColumnarExec(optimizedChild, goal)
       }
 
       r2c.child match {
@@ -154,15 +159,13 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
         case other => getColumnarToRowExec(other)
       }
 
-    // wrap adaptive plans into transitions to row, which is a no-op if the
-    // plan will naturally produce rows
+    // AdaptiveSparkPlanExec reports supportsColumnar=false even though the final
+    // query stage could be columnar so we wrap in GpuColumnarToRowExec to
+    // keep it row-based during planning. If a consumer needs columnar data then we
+    // will see GpuRowToColumnar(GpuColumnarToRow(adaptivePlan)) and the
+    // redundant transition will be optimized out
     case p: AdaptiveSparkPlanExec =>
-      GpuColumnarToRowExec(p, exportColumnarRdd = false)
-
-    case GpuRowToColumnarExec(GpuColumnarToRowExec(child, _), _) =>
-      // TODO document this fully
-      // this happens with adaptive plan wrapped by columnar write
-      child
+      GpuColumnarToRowExec(p)
 
     case p =>
       p.withNewChildren(p.children.map(c => optimizeAdaptiveTransitions(c, Some(p))))

@@ -340,6 +340,9 @@ class AdaptiveQueryExecSuite
         .executedPlan
         .isInstanceOf[GpuFileSourceScanExec])
 
+      // although the plan contains a GpuRowToColumnarExec, it uses a
+      // fast path and no conversion is applied therefore the metrics
+      // are not updated
       assert(transition.metrics("numOutputRows").value === 0)
 
     }, conf)

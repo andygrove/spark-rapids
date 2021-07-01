@@ -36,13 +36,15 @@ class Spark313Shims extends Spark312Shims {
     extensions.injectColumnar(_ => ColumnarOverrideRules())
     extensions.injectQueryStagePrepRule(_ => GpuQueryStagePrepOverrides())
     // injectFinalStagePrepRule is proposed to be added in Spark version 3.2.0 and
-    // possibly back-ported to 3.0.4 and 3.1.3
+    // possibly back-ported to 3.0.4 and 3.1.3. We use this to make the final query
+    // stage columnar in adaptive queries, where possible
     extensions.injectFinalStagePrepRule(_ => GpuFinalStagePrepOverrides())
   }
 
   override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan = {
-    //TODO better docs
-    // not needed any more
+    // with earlier Spark releases, we would need to insert an
+    // AvoidAdaptiveTransitions operator here but this is no longer required
+    // once SPARK-35881 is implemented
     child
   }
 
