@@ -639,15 +639,15 @@ abstract class SparkBaseShims extends SparkShims {
   }
 
   override def createGpuRowToColumnarTransition(
-      child: SparkPlan,
+      optimizedChild: SparkPlan,
       r2c: RowToColumnarExec,
       goal: CoalesceSizeGoal): SparkPlan = {
-    val transition = child match {
+    val transition = optimizedChild match {
       case GpuColumnarToRowExec(child, _) =>
-        // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
+        // avoid a redundant GpuRowToColumnarExec(GpuColumnarToRowExec((_))
         GpuRowToColumnarExec(child, goal)
       case _ =>
-        GpuRowToColumnarExec(child, goal)
+        GpuRowToColumnarExec(optimizedChild, goal)
     }
     r2c.child match {
       case _: AdaptiveSparkPlanExec =>

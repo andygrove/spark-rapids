@@ -42,18 +42,18 @@ class Spark313Shims extends Spark312Shims {
   }
 
   override def createGpuRowToColumnarTransition(
-      child: SparkPlan,
+      optimizedChild: SparkPlan,
       r2c: RowToColumnarExec,
       goal: CoalesceSizeGoal): SparkPlan = {
     // with earlier Spark releases, we would need to insert an
     // AvoidAdaptiveTransitions operator here but this is no longer required
     // once SPARK-35881 is implemented
-    child match {
+    optimizedChild match {
       case GpuColumnarToRowExec(child, _) =>
-        // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
+        // avoid a redundant GpuRowToColumnarExec(GpuColumnarToRowExec((_))
         GpuRowToColumnarExec(child, goal)
       case _ =>
-        GpuRowToColumnarExec(child, goal)
+        GpuRowToColumnarExec(optimizedChild, goal)
     }
   }
 
