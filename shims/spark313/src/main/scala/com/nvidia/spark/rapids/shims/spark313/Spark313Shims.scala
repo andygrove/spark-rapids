@@ -21,7 +21,7 @@ import com.nvidia.spark.rapids.shims.spark312.Spark312Shims
 import com.nvidia.spark.rapids.spark313.RapidsShuffleManager
 
 import org.apache.spark.sql.SparkSessionExtensions
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{RowToColumnarExec, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 
 class Spark313Shims extends Spark312Shims {
@@ -41,11 +41,20 @@ class Spark313Shims extends Spark312Shims {
     extensions.injectFinalStagePrepRule(_ => GpuFinalStagePrepOverrides())
   }
 
-  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan = {
+  override def createGpuRowToColumnarTransition(
+      child: SparkPlan,
+      r2c: RowToColumnarExec,
+      goal: CoalesceSizeGoal): SparkPlan = {
     // with earlier Spark releases, we would need to insert an
     // AvoidAdaptiveTransitions operator here but this is no longer required
     // once SPARK-35881 is implemented
-    child
+    child match {
+      case GpuColumnarToRowExec(child, _) =>
+        // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
+        GpuRowToColumnarExec(child, goal)
+      case _ =>
+        GpuRowToColumnarExec(child, goal)
+    }
   }
 
   override def isAdaptiveFinalPlanColumnar(plan: AdaptiveSparkPlanExec): Boolean =

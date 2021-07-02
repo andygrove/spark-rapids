@@ -63,27 +63,7 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     // HostColumnarToGpu(RowToColumnarExec(..)) => GpuRowToColumnarExec(..)
     case HostColumnarToGpu(r2c: RowToColumnarExec, goal) =>
       val optimizedChild = optimizeAdaptiveTransitions(r2c.child, Some(r2c))
-
-      //TODO move all of this logic into the shim layer
-
-      val transition = optimizedChild match {
-        case GpuColumnarToRowExec(child, _) =>
-          // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
-          GpuRowToColumnarExec(child, goal)
-        case _ =>
-          GpuRowToColumnarExec(optimizedChild, goal)
-      }
-
-      r2c.child match {
-        case _: AdaptiveSparkPlanExec =>
-          // When the input is an adaptive plan we do not get to see the GPU version until
-          // the plan is executed and sometimes the plan will have a GpuColumnarToRowExec as the
-          // final operator and we can bypass this to keep the data columnar by inserting
-          // the [[AvoidAdaptiveTransitionToRow]] operator here
-          ShimLoader.getSparkShims.createAvoidAdaptiveTransitionToRow(transition)
-        case _ =>
-          transition
-      }
+      ShimLoader.getSparkShims.createGpuRowToColumnarTransition(optimizedChild, r2c, goal)
 
     case ColumnarToRowExec(GpuBringBackToHost(
         GpuShuffleCoalesceExec(e: GpuShuffleExchangeExecBase, _))) if parent.isEmpty =>

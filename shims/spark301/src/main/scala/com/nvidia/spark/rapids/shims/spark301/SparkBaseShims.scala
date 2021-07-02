@@ -638,8 +638,28 @@ abstract class SparkBaseShims extends SparkShims {
     extensions.injectQueryStagePrepRule(_ => GpuQueryStagePrepOverrides())
   }
 
-  override def createAvoidAdaptiveTransitionToRow(child: SparkPlan): SparkPlan =
-    AvoidAdaptiveTransitionToRow(child)
+  override def createGpuRowToColumnarTransition(
+      child: SparkPlan,
+      r2c: RowToColumnarExec,
+      goal: CoalesceSizeGoal): SparkPlan = {
+    val transition = child match {
+      case GpuColumnarToRowExec(child, _) =>
+        // avoid a redundant GpuColumnarToRowExec(GpuRowToColumnarExec(_))
+        GpuRowToColumnarExec(child, goal)
+      case _ =>
+        GpuRowToColumnarExec(child, goal)
+    }
+    r2c.child match {
+      case _: AdaptiveSparkPlanExec =>
+        // When the input is an adaptive plan we do not get to see the GPU version until
+        // the plan is executed and sometimes the plan will have a GpuColumnarToRowExec as the
+        // final operator and we can bypass this to keep the data columnar by inserting
+        // the [[AvoidAdaptiveTransitionToRow]] operator here
+        AvoidAdaptiveTransitionToRow(transition)
+      case _ =>
+        transition
+    }
+  }
 
   override def isAdaptiveFinalPlanColumnar(plan: AdaptiveSparkPlanExec): Boolean = false
 }
