@@ -55,9 +55,21 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     df => df.withColumn("c1", to_date(col("c0"), "yyyy-MM-dd"))
   }
 
+  testSparkResultsAreEqual("to_date yyyy-MM-dd LEGACY",
+    datesAsStrings,
+    conf = new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "LEGACY")) {
+    df => df.withColumn("c1", to_date(col("c0"), "yyyy-MM-dd"))
+  }
+
   testSparkResultsAreEqual("to_date dd/MM/yyyy",
       datesAsStrings,
       conf = new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "CORRECTED")) {
+    df => df.withColumn("c1", to_date(col("c0"), "dd/MM/yyyy"))
+  }
+
+  testSparkResultsAreEqual("to_date dd/MM/yyyy LEGACY",
+    datesAsStrings,
+    conf = new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "LEGACY")) {
     df => df.withColumn("c1", to_date(col("c0"), "dd/MM/yyyy"))
   }
 
@@ -244,10 +256,20 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     "1999-12-31 11:59:",
     "1999-12-31 11:59:5",
     "1999-12-31 11:59:59",
+    "  1999-12-31 11:59:59",
+    "\t1999-12-31 11:59:59",
+    "\t1999-12-31 11:59:59\n",
     "1999-12-31 11:59:59.",
     "1999-12-31 11:59:59.9",
+    " 1999-12-31 11:59:59.9",
     "1999-12-31 11:59:59.99",
     "1999-12-31 11:59:59.999",
+    "1999-12-31 11:59:59.9999",
+    "1999-12-31 11:59:59.99999",
+    "1999-12-31 11:59:59.999999",
+    "1999-12-31 11:59:59.9999999",
+    "1999-12-31 11:59:59.99999999",
+    "1999-12-31 11:59:59.999999999",
     "31/12/1999",
     "31/12/1999 11:59:59.999",
     "1999-12-31",
@@ -257,9 +279,9 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     "1975/06",
     "1975/06/18",
     "1975/06/18 06:48:57",
-    "1999-12-31\n",
-    "\t1999-12-31",
-    "\n1999-12-31",
+    "1999-12-29\n",
+    "\t1999-12-30",
+    " \n1999-12-31",
     "1999/12/31"
   )
 
