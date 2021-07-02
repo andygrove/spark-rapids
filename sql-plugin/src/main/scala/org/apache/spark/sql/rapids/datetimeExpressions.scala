@@ -444,6 +444,7 @@ object GpuToTimestamp extends Arm {
     "yyyy-MM",
     "yyyy/MM/dd",
     "yyyy/MM",
+    "dd-MM-yyyy",
     "dd/MM/yyyy",
     "yyyy-MM-dd HH:mm:ss",
     "MM-dd",
@@ -455,6 +456,8 @@ object GpuToTimestamp extends Arm {
   // We are compatible with Spark for these formats when the timeParserPolicy is LEGACY
   val LEGACY_COMPATIBLE_FORMATS = Seq(
     "yyyy-MM-dd",
+    "yyyy/MM/dd",
+    "dd-MM-yyyy",
     "dd/MM/yyyy",
     "yyyy-MM-dd HH:mm:ss"
   )
@@ -561,13 +564,19 @@ object GpuToTimestamp extends Arm {
       }
     }
 
+    // TODO need real check or split this method into specialized versions for date vs timestamp
+    val isTimestampFormat = strfFormat.length > 10
+
     // now convert single digit components to two digits, for mm, dd, hh, mm, ss
-    val fixUpSingleDigitComponents = Seq(
+    val fixUpDates = Seq(
       // "yyyy-m-" -> "yyyy-mm-"
       RegexReplace("(\\A\\d{4})-(\\d{1}-)", "\\1-0\\2"),
       // "yyyy-mm-d" -> "yyyy-mm-dd"
       RegexReplace("(\\A\\d{4}-\\d{2})-(\\d{1}\\Z)", "\\1-0\\2"),
       RegexReplace("(\\A\\d{4}-\\d{2})-(\\d{1}[ T])", "\\1-0\\2"),
+    )
+
+    val fixUpTimestamps = Seq(
       // "yyyy-mm-dd h:" -> "yyyy-mm-dd hh:"
       RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2"),
       RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2})T(\\d{1}:)", "\\1T0\\2"),
@@ -578,6 +587,13 @@ object GpuToTimestamp extends Arm {
       RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ .])", "\\1:0\\2"),
       RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2"),
     )
+
+    val fixUpSingleDigitComponents = if (isTimestampFormat) {
+      fixUpDates ++ fixUpTimestamps
+    } else {
+      fixUpDates
+    }
+
     val fixedUp = withResource(sanitized.incRefCount()) { t =>
       fixUpSingleDigitComponents.foldLeft(t)((a, b) => {
         withResource(a) {
@@ -586,8 +602,6 @@ object GpuToTimestamp extends Arm {
       })
     }
 
-    // TODO need real check or split this method into specialized versions for date vs timestamp
-    val isTimestampFormat = strfFormat.length > 10
 
     if (isTimestampFormat) {
       withResource(fixedUp) { stripped =>
