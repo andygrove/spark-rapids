@@ -128,6 +128,12 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     df => df.withColumn("c1", unix_timestamp(col("c0"), "yyyy-MM-dd HH:mm:ss"))
   }
 
+  testSparkResultsAreEqual("unix_timestamp parse timestamp LEGACY",
+    timestampsAsStrings,
+    new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "LEGACY")) {
+    df => df.withColumn("c1", unix_timestamp(col("c0"), "yyyy-MM-dd HH:mm:ss"))
+  }
+
   testSparkResultsAreEqual("unix_timestamp parse timestamp millis (fall back to CPU)",
     timestampsAsStrings,
     new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "CORRECTED")
@@ -147,7 +153,7 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
       val df = withGpuSparkSession(spark => {
         timestampsAsStrings(spark)
             .repartition(2)
-            .withColumn("c1", unix_timestamp(col("c0"), "yyyy-MM-dd HH:mm:ss"))
+            .withColumn("c1", unix_timestamp(col("c0"), "u"))
       }, new SparkConf().set(SQLConf.LEGACY_TIME_PARSER_POLICY.key, "LEGACY"))
       df.collect()
     }

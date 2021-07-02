@@ -17,14 +17,14 @@
 package org.apache.spark.sql.rapids
 
 import java.util.concurrent.TimeUnit
-
 import ai.rapids.cudf.{BinaryOp, ColumnVector, ColumnView, DType, Scalar}
 import com.nvidia.spark.rapids.{Arm, BinaryExprMeta, DataFromReplacementRule, DateUtils, GpuBinaryExpression, GpuColumnVector, GpuExpression, GpuOverrides, GpuScalar, GpuUnaryExpression, RapidsConf, RapidsMeta}
 import com.nvidia.spark.rapids.DateUtils.TimestampFormatConversionException
 import com.nvidia.spark.rapids.GpuOverrides.{extractStringLit, getTimeParserPolicy}
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
-
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{BinaryExpression, ExpectsInputTypes, Expression, ImplicitCastInputTypes, NullIntolerant, TimeZoneAwareExpression}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.unsafe.types.CalendarInterval
@@ -397,8 +397,11 @@ abstract class UnixTimeExprMeta[A <: BinaryExpression with TimeZoneAwareExpressi
       extractStringLit(expr.right) match {
         case Some(rightLit) =>
           sparkFormat = rightLit
-          if (GpuOverrides.getTimeParserPolicy == LegacyTimeParserPolicy) {
-            willNotWorkOnGpu("legacyTimeParserPolicy LEGACY is not supported")
+          if (GpuOverrides.getTimeParserPolicy == LegacyTimeParserPolicy &&
+              !GpuToTimestamp.LEGACY_COMPATIBLE_FORMATS.contains(sparkFormat)) {
+            willNotWorkOnGpu(s"LEGACY format '$sparkFormat' on the GPU is not guaranteed " +
+              s"to produce the same results as Spark on CPU. Set " +
+              s"spark.rapids.sql.incompatibleDateFormats.enabled=true to force onto GPU.")
           } else {
             try {
               // try and convert the format to cuDF format - this will throw an exception if
@@ -406,9 +409,9 @@ abstract class UnixTimeExprMeta[A <: BinaryExpression with TimeZoneAwareExpressi
               strfFormat = DateUtils.toStrf(sparkFormat,
                 expr.left.dataType == DataTypes.StringType)
               // format parsed ok, so it is either compatible (tested/certified) or incompatible
-              if (!GpuToTimestamp.COMPATIBLE_FORMATS.contains(sparkFormat) &&
+              if (!GpuToTimestamp.CORRECTED_COMPATIBLE_FORMATS.contains(sparkFormat) &&
                   !conf.incompatDateFormats) {
-                willNotWorkOnGpu(s"format '$sparkFormat' on the GPU is not guaranteed " +
+                willNotWorkOnGpu(s"CORRECTED format '$sparkFormat' on the GPU is not guaranteed " +
                   s"to produce the same results as Spark on CPU. Set " +
                   s"spark.rapids.sql.incompatibleDateFormats.enabled=true to force onto GPU.")
               }
@@ -430,8 +433,9 @@ object ExceptionTimeParserPolicy extends TimeParserPolicy
 object CorrectedTimeParserPolicy extends TimeParserPolicy
 
 object GpuToTimestamp extends Arm {
-  /** We are compatible with Spark for these formats */
-  val COMPATIBLE_FORMATS = Seq(
+  // We are compatible with Spark for these formats when the timeParserPolicy is CORRECTED
+  // or EXCEPTION.
+  val CORRECTED_COMPATIBLE_FORMATS = Seq(
     "yyyy-MM-dd",
     "yyyy-MM",
     "yyyy/MM/dd",
@@ -442,6 +446,11 @@ object GpuToTimestamp extends Arm {
     "MM/dd",
     "dd-MM",
     "dd/MM"
+  )
+
+  // We are compatible with Spark for these formats when the timeParserPolicy is LEGACY
+  val LEGACY_COMPATIBLE_FORMATS = Seq(
+    "yyyy-MM-dd HH:mm:ss",
   )
 
   def daysScalarSeconds(name: String): Scalar = {
@@ -459,7 +468,7 @@ object GpuToTimestamp extends Arm {
   }
 
   def isTimestamp(col: ColumnVector, sparkFormat: String, strfFormat: String) : ColumnVector = {
-    if (COMPATIBLE_FORMATS.contains(sparkFormat)) {
+    if (CORRECTED_COMPATIBLE_FORMATS.contains(sparkFormat)) {
       // the cuDF `is_timestamp` function is less restrictive than Spark's behavior for UnixTime
       // and ToUnixTime and will support parsing a subset of a string so we check the length of
       // the string as well which works well for fixed-length formats but if/when we want to
@@ -481,20 +490,46 @@ object GpuToTimestamp extends Arm {
     }
   }
 
+  def isLegacyTimestamp(
+      col: ColumnVector,
+      sparkFormat: String,
+      strfFormat: String) : ColumnVector = {
+    sparkFormat match {
+      case "yyyy-MM-dd HH:mm:ss" =>
+        // yyyy-MM-dd HH:mm:s
+        // yyyy-MM-dd HH:mm:ss
+        // yyyy-MM-dd HH:mm:ss.S
+        // yyyy-MM-dd HH:mm:ss.SS
+        // yyyy-MM-dd HH:mm:ss.SSS
+        withResource(col.getCharLengths) { actualLen =>
+          withResource(Scalar.fromInt(18)) { expectedLen =>
+            withResource(actualLen.greaterOrEqualTo(expectedLen)) { lengthOk =>
+              withResource(col.isTimestamp(strfFormat)) { isTimestamp =>
+                isTimestamp.and(lengthOk)
+              }
+            }
+          }
+        }
+      case _ =>
+        // this is the incompatibleDateFormats case where we do not guarantee compatibility with
+        // Spark and assume that all non-null inputs are valid
+        ColumnVector.fromScalar(Scalar.fromBool(true), col.getRowCount.toInt)
+    }
+  }
+
   def parseStringAsTimestamp(
       lhs: GpuColumnVector,
       sparkFormat: String,
       strfFormat: String,
       dtype: DType,
       daysScalar: String => Scalar,
+      isTimestamp: (ColumnVector, String, String) => ColumnVector,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
-
-    val isTimestamp = GpuToTimestamp.isTimestamp(lhs.getBase, sparkFormat, strfFormat)
 
     // in addition to date/timestamp strings, we also need to check for special dates and null
     // values, since anything else is invalid and should throw an error or be converted to null
     // depending on the policy
-    withResource(isTimestamp) { isTimestamp =>
+    withResource(isTimestamp(lhs.getBase, sparkFormat, strfFormat)) { isTimestamp =>
       withResource(daysEqual(lhs.getBase, DateUtils.EPOCH)) { isEpoch =>
         withResource(daysEqual(lhs.getBase, DateUtils.NOW)) { isNow =>
           withResource(daysEqual(lhs.getBase, DateUtils.TODAY)) { isToday =>
@@ -578,6 +613,11 @@ abstract class GpuToTimestamp
         strfFormat,
         DType.TIMESTAMP_MICROSECONDS,
         daysScalarMicros,
+        if (getTimeParserPolicy == LegacyTimeParserPolicy) {
+          isLegacyTimestamp
+        } else {
+          isTimestamp
+        },
         (col, strfFormat) => col.asTimestampMicroseconds(strfFormat))
     } else { // Timestamp or DateType
       lhs.getBase.asTimestampMicroseconds()
@@ -620,6 +660,11 @@ abstract class GpuToTimestampImproved extends GpuToTimestamp {
         strfFormat,
         DType.TIMESTAMP_SECONDS,
         daysScalarSeconds,
+        if (getTimeParserPolicy == LegacyTimeParserPolicy) {
+          isLegacyTimestamp
+        } else {
+          isTimestamp
+        },
         (col, strfFormat) => col.asTimestampSeconds(strfFormat))
     } else if (lhs.dataType() == DateType){
       lhs.getBase.asTimestampSeconds()
