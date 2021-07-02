@@ -17,16 +17,15 @@
 package com.nvidia.spark.rapids
 
 import java.sql.{Date, Timestamp}
-
 import scala.collection.mutable.ListBuffer
-
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.functions.{col, to_date, to_timestamp, unix_timestamp}
 import org.apache.spark.sql.internal.SQLConf
+
+import scala.util.Random
 
 class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterEach {
 
@@ -226,6 +225,27 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     assert(cpuNowSeconds <= gpuNowSeconds)
   }
 
+
+  override def compareResults(
+      sort: Boolean,
+      maxFloatDiff: Double,
+      fromCpu: Array[Row],
+      fromGpu: Array[Row]): Unit = {
+    assert(fromCpu.length === fromGpu.length)
+    fromCpu.zip(fromGpu).zipWithIndex.foreach {
+      case ((cpu, gpu), i) =>
+        if (!super.compare(cpu, gpu, 0.0001)) {
+          fail(
+            s"""Mismatch at row $i:
+               |
+               |CPU: $cpu
+               |
+               |GPU: $gpu"""
+              .stripMargin)
+        }
+    }
+  }
+
   private def dates(spark: SparkSession) = {
     import spark.implicits._
     dateValues.toDF("c0")
@@ -253,13 +273,22 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     values.toDF("c0")
   }
 
-  private val _timestampValues = Seq(
-    "1999-12-31 11:59:59",
-    "1999-1-1 1:2:3",
-    "1999-1-1 1:2:3.1"
-  )
+  private def generateTimestampStrings(n: Int): Seq[String] = {
+    val validChars = "0123456789:-. \t\n"
+    val rand = new Random(0) // fixed seed
+    val list = new ListBuffer[String]()
+    for (_ <- 0 to n) {
+      val len = rand.nextInt(32)
+      val str = new StringBuilder(len)
+      for (_ <- 0 to len) {
+        str.append(validChars.charAt(rand.nextInt(validChars.length)))
+      }
+      list += str.toString
+    }
+    list
+  }
 
-  private val timestampValues = Seq(
+  private val timestampValues = /*generateTimestampStrings(10000) ++*/ Seq(
     "",
     "null",
     null,
