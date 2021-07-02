@@ -225,24 +225,28 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     assert(cpuNowSeconds <= gpuNowSeconds)
   }
 
-
+  // just show the failures so we don't have to manually parse all the output to find which ones failed
   override def compareResults(
       sort: Boolean,
       maxFloatDiff: Double,
       fromCpu: Array[Row],
       fromGpu: Array[Row]): Unit = {
     assert(fromCpu.length === fromGpu.length)
-    fromCpu.zip(fromGpu).zipWithIndex.foreach {
-      case ((cpu, gpu), i) =>
-        if (!super.compare(cpu, gpu, 0.0001)) {
-          fail(
-            s"""Mismatch at row $i:
-               |
-               |CPU: $cpu
-               |
-               |GPU: $gpu"""
-              .stripMargin)
-        }
+
+    val failures = fromCpu.zip(fromGpu).zipWithIndex.filterNot {
+      case ((cpu, gpu), _) => super.compare(cpu, gpu, 0.0001)
+    }
+
+    if (failures.nonEmpty) {
+      val str = failures.map {
+        case ((cpu, gpu), i) =>
+          s"""
+             |[#$i] CPU: $cpu
+             |[#$i] GPU: $gpu
+             |
+             |""".stripMargin
+      }.mkString("\n")
+      fail(s"Mismatch between CPU and GPU for the following rows:\n$str")
     }
   }
 
@@ -288,7 +292,7 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     list
   }
 
-  private val timestampValues = /*generateTimestampStrings(10000) ++*/ Seq(
+  private val timestampValues = generateTimestampStrings(10000) ++ Seq(
     "",
     "null",
     null,
