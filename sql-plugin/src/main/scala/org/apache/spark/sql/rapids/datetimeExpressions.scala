@@ -398,7 +398,7 @@ abstract class UnixTimeExprMeta[A <: BinaryExpression with TimeZoneAwareExpressi
         case Some(rightLit) =>
           sparkFormat = rightLit
           if (GpuOverrides.getTimeParserPolicy == LegacyTimeParserPolicy &&
-              !GpuToTimestamp.LEGACY_COMPATIBLE_FORMATS.exists(_.format == sparkFormat)) {
+              !GpuToTimestamp.LEGACY_COMPATIBLE_FORMATS.contains(sparkFormat)) {
             willNotWorkOnGpu(s"LEGACY format '$sparkFormat' on the GPU is not guaranteed " +
               s"to produce the same results as Spark on CPU. Set " +
               s"spark.rapids.sql.incompatibleDateFormats.enabled=true to force onto GPU.")
@@ -454,11 +454,9 @@ object GpuToTimestamp extends Arm {
 
   // We are compatible with Spark for these formats when the timeParserPolicy is LEGACY
   val LEGACY_COMPATIBLE_FORMATS = Seq(
-    // TODO should we even have minimum widths for these?
-    VariableWidthTemporalFormat("yyyy-MM-dd", 8),
-    VariableWidthTemporalFormat("dd/MM/yyyy", 8),
-    // Minimum length includes single digit for seconds "yyyy-MM-dd HH:mm:s"
-    VariableWidthTemporalFormat("yyyy-MM-dd HH:mm:ss", 18)
+    "yyyy-MM-dd",
+    "dd/MM/yyyy",
+    "yyyy-MM-dd HH:mm:ss"
   )
 
   def daysScalarSeconds(name: String): Scalar = {
@@ -495,20 +493,6 @@ object GpuToTimestamp extends Arm {
       // this is the incompatibleDateFormats case where we do not guarantee compatibility with
       // Spark and assume that all non-null inputs are valid
       ColumnVector.fromScalar(Scalar.fromBool(true), col.getRowCount.toInt)
-    }
-  }
-
-  def isLegacyTimestamp(
-      col: ColumnVector,
-      sparkFormat: String,
-      strfFormat: String) : ColumnVector = {
-    LEGACY_COMPATIBLE_FORMATS.find(_.format == sparkFormat) match {
-      case Some(VariableWidthTemporalFormat(_, minLength)) =>
-        withResource(col.strip()) { stripped =>
-          stripped.isTimestamp(strfFormat)
-        }
-      case _ =>
-        throw new IllegalStateException()
     }
   }
 
@@ -564,27 +548,87 @@ object GpuToTimestamp extends Arm {
 
   def parseStringAsTimestampLegacy(
       lhs: GpuColumnVector,
-      sparkFormat: String,
       strfFormat: String,
       dtype: DType,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
 
     // legacy mode does not support newline at beginning of string
-    withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]")) { hasLeadingNewline =>
-      withResource(lhs.getBase.strip()) { stripped =>
-        withResource(isLegacyTimestamp(stripped, sparkFormat, strfFormat)) { isTimestamp =>
+    val sanitized = withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]")) { hasLeadingNewline =>
+      withResource(Scalar.fromNull(DType.STRING)) { nullValue =>
+        withResource(lhs.getBase.strip()) { stripped =>
+          hasLeadingNewline.ifElse(nullValue, stripped)
+        }
+      }
+    }
+
+    /*
+
+[1999-1-1 11:59:,null], [1999-1-1 11:59:5,915191945], [1999-1-1 11:59:59,915191999], [1999-1-1,null], [1999-1-1 ,null], [1999-1-1 1,null], [1999-1-1 1:,null], [1999-1-1 1:2,null], [1999-1-1 1:2:,null], [1999-1-1 1:2:3,915152523], [1999-1-1 1:2:3.,915152523], [1999-1-1 1:12:3.,915153123], [1999-1-1 11:12:3.,915189123], [1999-1-1 11:2:3.,915188523], [1999-1-1 11:2:13.,915188533], [1999-1-1 1:2:3.4,915152523], [1999-1-1 ,null], [1999-12-31 11,null], [1999-12-31 11:,null], [1999-12-31 11:5,null], [1999-12-31 11:59,null], [1999-12-31 11:59:,null], [1999-12-31 11:59:5,946641545], [1999-12-31 11:59:59,946641599], [  1999-12-31 11:59:59,946641599], [	1999-12-31 11:59:59,946641599], [	1999-12-31 11:59:59
+,946641599], [1999-12-31 11:59:59.,946641599], [1999-12-31 11:59:59.9,946641599], [ 1999-12-31 11:59:59.9,946641599], [1999-12-31 11:59:59.99,946641599], [1999-12-31 11:59:59.999,946641599], [1999-12-31 11:59:59.9999,946641599], [1999-12-31 11:59:59.99999,946641599], [1999-12-31 11:59:59.999999,946641599], [1999-12-31 11:59:59.9999999,946641599], [1999-12-31 11:59:59.99999999,946641599], [1999-12-31 11:59:59.999999999,946641599], [31/12/1999,null], [31/12/1999 11:59:59.999,null], [1999-12-3,null], [1999-12-31,null], [1999/12/31,null], [1999-12,null], [1999/12,null], [1975/06,null], [1975/06/18,null], [1975/06/18 06:48:57,null], [1999-12-29
+,null], [	1999-12-30,null], [
+
+[1999-1-1 11:59:,915191940], [1999-1-1 11:59:5,915191945], [1999-1-1 11:59:59,915191999], [1999-1-1,null], [1999-1-1 ,null], [1999-1-1 1,null], [1999-1-1 1:,null], [1999-1-1 1:2,null], [1999-1-1 1:2:,null], [1999-1-1 1:2:3,915152523], [1999-1-1 1:2:3.,915152523], [1999-1-1 1:12:3.,915153123], [1999-1-1 11:12:3.,915189123], [1999-1-1 11:2:3.,915188523], [1999-1-1 11:2:13.,915188533], [1999-1-1 1:2:3.4,915152523], [1999-1-1 ,null], [1999-12-31 11,null], [1999-12-31 11:,null], [1999-12-31 11:5,null], [1999-12-31 11:59,null], [1999-12-31 11:59:,946641540], [1999-12-31 11:59:5,946641545], [1999-12-31 11:59:59,946641599], [  1999-12-31 11:59:59,946641599], [	1999-12-31 11:59:59,946641599], [	1999-12-31 11:59:59
+,946641599], [1999-12-31 11:59:59.,946641599], [1999-12-31 11:59:59.9,946641599], [ 1999-12-31 11:59:59.9,946641599], [1999-12-31 11:59:59.99,946641599], [1999-12-31 11:59:59.999,946641599], [1999-12-31 11:59:59.9999,946641599], [1999-12-31 11:59:59.99999,946641599], [1999-12-31 11:59:59.999999,946641599], [1999-12-31 11:59:59.9999999,946641599], [1999-12-31 11:59:59.99999999,946641599], [1999-12-31 11:59:59.999999999,946641599], [31/12/1999,null], [31/12/1999 11:59:59.999,null], [1999-12-3,null], [1999-12-31,null], [1999/12/31,null], [1999-12,null], [1999/12,null], [1975/06,null], [1975/06/18,null], [1975/06/18 06:48:57,null], [1999-12-29
+,null], [	1999-12-30,null], [
+
+     */
+
+    // now convert single digit components to two digits, for mm, dd, hh, mm, ss
+    val fixUpSingleDigitComponents = Seq(
+      // dates first
+      RegexReplace("(\\d{4})-(\\d{1}-\\d{1,2})", "\\1-0\\2"),
+      RegexReplace("(\\d{4}-\\d{2})-(\\d{1}Z)", "\\1-0\\2"),
+      RegexReplace("(\\d{4}-\\d{2})-(\\d{1}[ T])", "\\1-0\\2"),
+      // timestamp no fractional second
+      RegexReplace("(\\d{4}-\\d{2}-\\d{2}) (\\d{1}:\\d{1,2}:\\d{1,2})", "\\1 0\\2"),
+      RegexReplace("(\\d{4}-\\d{2}-\\d{2})T(\\d{1}:\\d{1,2}:\\d{1,2})", "\\1T0\\2"),
+      RegexReplace("(\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}):(\\d{1}:)", "\\1:0\\2"),
+      //TODO these last two almost certainly don't cover all cases
+      RegexReplace("(\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ .])", "\\1:0\\2"),
+      RegexReplace("(\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2"),
+    )
+    val fixedUp = withResource(sanitized.incRefCount()) { t =>
+      fixUpSingleDigitComponents.foldLeft(t)((a, b) => {
+        withResource(a) {
+          _.stringReplaceWithBackrefs(b.pattern, b.backref)
+        }
+      })
+    }
+
+
+    // TODO need real check or split this method into specialized versions for date vs timestamp
+    val isTimestampFormat = strfFormat.length > 10
+
+    if (isTimestampFormat) {
+      withResource(fixedUp) { stripped =>
+        withResource(stripped.matchesRe("\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\Z")) { noSeconds =>
           withResource(Scalar.fromNull(dtype)) { nullValue =>
-            withResource(asTimestamp(stripped, strfFormat)) { converted =>
-              withResource(isTimestamp.ifElse(converted, nullValue)) { answer =>
-                hasLeadingNewline.ifElse(nullValue, answer)
+            withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
+              withResource(asTimestamp(stripped, strfFormat)) { converted =>
+                withResource(isTimestamp.ifElse(converted, nullValue)) { answer =>
+                  noSeconds.ifElse(nullValue, answer)
+                }
               }
+            }
+          }
+        }
+      }
+    } else {
+      withResource(fixedUp) { stripped =>
+        withResource(Scalar.fromNull(dtype)) { nullValue =>
+          withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
+            withResource(asTimestamp(stripped, strfFormat)) { converted =>
+              isTimestamp.ifElse(converted, nullValue)
             }
           }
         }
       }
     }
   }
+
 }
+
+case class RegexReplace(pattern: String, backref: String)
 
 /**
  * A direct conversion of Spark's ToTimestamp class which converts time to UNIX timestamp by
@@ -625,7 +669,6 @@ abstract class GpuToTimestamp
       if (getTimeParserPolicy == LegacyTimeParserPolicy) {
         parseStringAsTimestampLegacy(
           lhs,
-          sparkFormat,
           strfFormat,
           DType.TIMESTAMP_MICROSECONDS,
           (col, strfFormat) => col.asTimestampMicroseconds(strfFormat))
@@ -676,7 +719,6 @@ abstract class GpuToTimestampImproved extends GpuToTimestamp {
       if (getTimeParserPolicy == LegacyTimeParserPolicy) {
         parseStringAsTimestampLegacy(
           lhs,
-          sparkFormat,
           strfFormat,
           DType.TIMESTAMP_SECONDS,
           (col, strfFormat) => col.asTimestampSeconds(strfFormat))

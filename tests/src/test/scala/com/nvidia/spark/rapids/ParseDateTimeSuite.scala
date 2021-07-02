@@ -253,6 +253,12 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     values.toDF("c0")
   }
 
+  private val _timestampValues = Seq(
+    "1999-12-31 11:59:59",
+    "1999-1-1 1:2:3",
+    "1999-1-1 1:2:3.1"
+  )
+
   private val timestampValues = Seq(
     "",
     "null",
@@ -266,7 +272,19 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     "1999-1-1 11:59:",
     "1999-1-1 11:59:5",
     "1999-1-1 11:59:59",
+    "1999-1-1",
+    "1999-1-1 ",
+    "1999-1-1 1",
+    "1999-1-1 1:",
+    "1999-1-1 1:2",
+    "1999-1-1 1:2:",
     "1999-1-1 1:2:3",
+    "1999-1-1 1:2:3.",
+    "1999-1-1 1:12:3.",
+    "1999-1-1 11:12:3.",
+    "1999-1-1 11:2:3.",
+    "1999-1-1 11:2:13.",
+    "1999-1-1 1:2:3.4",
     "1999-1-1 ",
     "1999-12-31 11",
     "1999-12-31 11:",
