@@ -398,7 +398,7 @@ abstract class UnixTimeExprMeta[A <: BinaryExpression with TimeZoneAwareExpressi
         case Some(rightLit) =>
           sparkFormat = rightLit
           if (GpuOverrides.getTimeParserPolicy == LegacyTimeParserPolicy &&
-              !GpuToTimestamp.LEGACY_COMPATIBLE_FORMATS.contains(sparkFormat)) {
+              !GpuToTimestamp.LEGACY_COMPATIBLE_FORMATS.exists(_.format == sparkFormat)) {
             willNotWorkOnGpu(s"LEGACY format '$sparkFormat' on the GPU is not guaranteed " +
               s"to produce the same results as Spark on CPU. Set " +
               s"spark.rapids.sql.incompatibleDateFormats.enabled=true to force onto GPU.")
@@ -432,6 +432,10 @@ object LegacyTimeParserPolicy extends TimeParserPolicy
 object ExceptionTimeParserPolicy extends TimeParserPolicy
 object CorrectedTimeParserPolicy extends TimeParserPolicy
 
+sealed trait TemporalFormat
+case class FixedWidthTemporalFormat(format: String) extends TemporalFormat
+case class VariableWidthTemporalFormat(format: String, minLength: Int) extends TemporalFormat
+
 object GpuToTimestamp extends Arm {
   // We are compatible with Spark for these formats when the timeParserPolicy is CORRECTED
   // or EXCEPTION.
@@ -450,9 +454,11 @@ object GpuToTimestamp extends Arm {
 
   // We are compatible with Spark for these formats when the timeParserPolicy is LEGACY
   val LEGACY_COMPATIBLE_FORMATS = Seq(
-    "yyyy-MM-dd",
-    "dd/MM/yyyy",
-    "yyyy-MM-dd HH:mm:ss"
+    // TODO should we even have minimum widths for these?
+    VariableWidthTemporalFormat("yyyy-MM-dd", 8),
+    VariableWidthTemporalFormat("dd/MM/yyyy", 8),
+    // Minimum length includes single digit for seconds "yyyy-MM-dd HH:mm:s"
+    VariableWidthTemporalFormat("yyyy-MM-dd HH:mm:ss", 18)
   )
 
   def daysScalarSeconds(name: String): Scalar = {
@@ -496,36 +502,10 @@ object GpuToTimestamp extends Arm {
       col: ColumnVector,
       sparkFormat: String,
       strfFormat: String) : ColumnVector = {
-    sparkFormat match {
-      case "yyyy-MM-dd HH:mm:ss" =>
-        // The following formats are valid in legacy mode
-        // yyyy-MM-dd HH:mm:s
-        // yyyy-MM-dd HH:mm:ss
-        // yyyy-MM-dd HH:mm:ss.S
-        // yyyy-MM-dd HH:mm:ss.SS
-        // yyyy-MM-dd HH:mm:ss.SSS
+    LEGACY_COMPATIBLE_FORMATS.find(_.format == sparkFormat) match {
+      case Some(VariableWidthTemporalFormat(_, minLength)) =>
         withResource(col.strip()) { stripped =>
-          withResource(stripped.getCharLengths) { actualLen =>
-            withResource(Scalar.fromInt(18)) { expectedLen =>
-              withResource(actualLen.greaterOrEqualTo(expectedLen)) { lengthOk =>
-                withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
-                  isTimestamp.and(lengthOk)
-                }
-              }
-            }
-          }
-        }
-      case "yyyy-MM-dd" | "dd/MM/yyyy" =>
-        withResource(col.strip()) { stripped =>
-          withResource(stripped.getCharLengths) { actualLen =>
-            withResource(Scalar.fromInt(10)) { expectedLen =>
-              withResource(actualLen.greaterOrEqualTo(expectedLen)) { lengthOk =>
-                withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
-                  isTimestamp.and(lengthOk)
-                }
-              }
-            }
-          }
+          stripped.isTimestamp(strfFormat)
         }
       case _ =>
         throw new IllegalStateException()
@@ -538,7 +518,6 @@ object GpuToTimestamp extends Arm {
       strfFormat: String,
       dtype: DType,
       daysScalar: String => Scalar,
-      isTimestamp: (ColumnVector, String, String) => ColumnVector,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
 
     // in addition to date/timestamp strings, we also need to check for special dates and null
@@ -550,21 +529,19 @@ object GpuToTimestamp extends Arm {
           withResource(daysEqual(lhs.getBase, DateUtils.TODAY)) { isToday =>
             withResource(daysEqual(lhs.getBase, DateUtils.YESTERDAY)) { isYesterday =>
               withResource(daysEqual(lhs.getBase, DateUtils.TOMORROW)) { isTomorrow =>
-                withResource(lhs.getBase.isNull) { _ => //TODO why is this value not used?
-                  withResource(Scalar.fromNull(dtype)) { nullValue =>
-                    withResource(asTimestamp(lhs.getBase, strfFormat)) { converted =>
-                      withResource(daysScalar(DateUtils.EPOCH)) { epoch =>
-                        withResource(daysScalar(DateUtils.NOW)) { now =>
-                          withResource(daysScalar(DateUtils.TODAY)) { today =>
-                            withResource(daysScalar(DateUtils.YESTERDAY)) { yesterday =>
-                              withResource(daysScalar(DateUtils.TOMORROW)) { tomorrow =>
-                                withResource(isTomorrow.ifElse(tomorrow, nullValue)) { a =>
-                                  withResource(isYesterday.ifElse(yesterday, a)) { b =>
-                                    withResource(isToday.ifElse(today, b)) { c =>
-                                      withResource(isNow.ifElse(now, c)) { d =>
-                                        withResource(isEpoch.ifElse(epoch, d)) { e =>
-                                          isTimestamp.ifElse(converted, e)
-                                        }
+                withResource(Scalar.fromNull(dtype)) { nullValue =>
+                  withResource(asTimestamp(lhs.getBase, strfFormat)) { converted =>
+                    withResource(daysScalar(DateUtils.EPOCH)) { epoch =>
+                      withResource(daysScalar(DateUtils.NOW)) { now =>
+                        withResource(daysScalar(DateUtils.TODAY)) { today =>
+                          withResource(daysScalar(DateUtils.YESTERDAY)) { yesterday =>
+                            withResource(daysScalar(DateUtils.TOMORROW)) { tomorrow =>
+                              withResource(isTomorrow.ifElse(tomorrow, nullValue)) { a =>
+                                withResource(isYesterday.ifElse(yesterday, a)) { b =>
+                                  withResource(isToday.ifElse(today, b)) { c =>
+                                    withResource(isNow.ifElse(now, c)) { d =>
+                                      withResource(isEpoch.ifElse(epoch, d)) { e =>
+                                        isTimestamp.ifElse(converted, e)
                                       }
                                     }
                                   }
@@ -590,17 +567,17 @@ object GpuToTimestamp extends Arm {
       sparkFormat: String,
       strfFormat: String,
       dtype: DType,
-      daysScalar: String => Scalar,
-      isTimestamp: (ColumnVector, String, String) => ColumnVector,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
 
+    // legacy mode does not support newline at beginning of string
     withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]")) { hasLeadingNewline =>
       withResource(lhs.getBase.strip()) { stripped =>
-        withResource(isTimestamp(stripped, sparkFormat, strfFormat)) { isTimestamp =>
+        withResource(isLegacyTimestamp(stripped, sparkFormat, strfFormat)) { isTimestamp =>
           withResource(Scalar.fromNull(dtype)) { nullValue =>
             withResource(asTimestamp(stripped, strfFormat)) { converted =>
-              //TODO clear intermediate results
-              hasLeadingNewline.ifElse(nullValue, isTimestamp.ifElse(converted, nullValue))
+              withResource(isTimestamp.ifElse(converted, nullValue)) { answer =>
+                hasLeadingNewline.ifElse(nullValue, answer)
+              }
             }
           }
         }
@@ -651,8 +628,6 @@ abstract class GpuToTimestamp
           sparkFormat,
           strfFormat,
           DType.TIMESTAMP_MICROSECONDS,
-          daysScalarMicros,
-          isLegacyTimestamp,
           (col, strfFormat) => col.asTimestampMicroseconds(strfFormat))
       } else {
         parseStringAsTimestamp(
@@ -661,7 +636,6 @@ abstract class GpuToTimestamp
           strfFormat,
           DType.TIMESTAMP_MICROSECONDS,
           daysScalarMicros,
-          isTimestamp,
           (col, strfFormat) => col.asTimestampMicroseconds(strfFormat))
       }
     } else { // Timestamp or DateType
@@ -705,8 +679,6 @@ abstract class GpuToTimestampImproved extends GpuToTimestamp {
           sparkFormat,
           strfFormat,
           DType.TIMESTAMP_SECONDS,
-          daysScalarSeconds,
-          isLegacyTimestamp,
           (col, strfFormat) => col.asTimestampSeconds(strfFormat))
       } else {
         parseStringAsTimestamp(
@@ -715,7 +687,6 @@ abstract class GpuToTimestampImproved extends GpuToTimestamp {
           strfFormat,
           DType.TIMESTAMP_SECONDS,
           daysScalarSeconds,
-          isTimestamp,
           (col, strfFormat) => col.asTimestampSeconds(strfFormat))
       }
     } else if (lhs.dataType() == DateType){
