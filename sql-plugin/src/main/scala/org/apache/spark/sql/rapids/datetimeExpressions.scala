@@ -472,11 +472,31 @@ object GpuToTimestamp extends Arm {
 
   /** Regex rule to replace "yyyy-mm-d" with "yyyy-mm-dd" */
   val FIX_SINGLE_DIGIT_DAY_1: RegexReplace =
-    RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}[\\D]+)", "\\1-0\\2")
+    RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}\\D+)", "\\1-0\\2")
 
   /** Regex rule to replace "yyyy-mm-d" with "yyyy-mm-dd" */
   val FIX_SINGLE_DIGIT_DAY_2: RegexReplace =
     RegexReplace("(\\A\\d+-\\d{2})-(\\d{1})\\Z", "\\1-0\\2")
+
+  /** Regex rule to replace "yyyy-mm-dd h-" with "yyyy-mm-dd hh-" */
+  val FIX_SINGLE_DIGIT_HOUR_1: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2")
+
+  /** Regex rule to replace "yyyy-mm-ddTh-" with "yyyy-mm-ddThh-" */
+  val FIX_SINGLE_DIGIT_HOUR_2: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2}-\\d{2})T(\\d{1}:)", "\\1T0\\2")
+
+  /** Regex rule to replace "yyyy-mm-dd[ T]hh-m-" with "yyyy-mm-dd[ T]hh-mm-" */
+  val FIX_SINGLE_DIGIT_MINUTE: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}):(\\d{1}:)", "\\1:0\\2")
+
+  /** Regex rule to replace "yyyy-mm-dd[ T]hh-mm-s" with "yyyy-mm-dd[ T]hh-mm-ss" */
+  val FIX_SINGLE_DIGIT_SECOND_1: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}\\D+)", "\\1:0\\2")
+
+  /** Regex rule to replace "yyyy-mm-dd[ T]hh-mm-s" with "yyyy-mm-dd[ T]hh-mm-ss" */
+  val FIX_SINGLE_DIGIT_SECOND_2: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2")
 
   /** Convert dates to standard format */
   val FIX_DATES = Seq(
@@ -572,28 +592,34 @@ object GpuToTimestamp extends Arm {
     }
   }
 
-  def parseStringAsTimestampLegacy(
+  /**
+   * Parse string to timestamp when timeParserPolicy is LEGACY. This was the default behavior
+   * prior to Spark 3.0
+   */
+  def parseStringAsTimestampWithLegacyParserPolicy(
       lhs: GpuColumnVector,
       strfFormat: String,
       dtype: DType,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
 
-    // we can skip some regex if we know for sure that we are dealing with date-only formats
+    // we can skip some regex replace operations if we know for sure that we are
+    // dealing with date-only formats
     val isTimestampFormat = strfFormat match {
       case "%Y-%m-%d" | "%d/%m/%Y" => false
       case _ => true
     }
 
+    //TODO implement unit tests for each format
     val fixUpTimestamps = Seq(
       // "yyyy-mm-dd h:" -> "yyyy-mm-dd hh:"
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2"),
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2})T(\\d{1}:)", "\\1T0\\2"),
+      FIX_SINGLE_DIGIT_HOUR_1,
+      FIX_SINGLE_DIGIT_HOUR_2,
       // "yyyy-mm-dd hh:m:" -> "yyyy-mm-dd hh:mm:"
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}):(\\d{1}:)", "\\1:0\\2"),
+      FIX_SINGLE_DIGIT_MINUTE,
       // "yyyy-mm-dd hh:mm:d" -> "yyyy-mm-dd hh:mm:dd"
       //TODO only covers if followed by certain endings .. may not be comprehensive enough yet
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ \\.])", "\\1:0\\2"),
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2")
+      FIX_SINGLE_DIGIT_SECOND_1,
+      FIX_SINGLE_DIGIT_SECOND_2
     )
 
     val fixUpSingleDigitComponents = if (isTimestampFormat) {
@@ -602,58 +628,62 @@ object GpuToTimestamp extends Arm {
       FIX_DATES
     }
 
-    // legacy mode does not support newline at beginning of string
-    val sanitized = withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]")) { hasLeadingNewline =>
+    val fixedUp = fixUpSingleDigitComponents
+      .foldLeft(rejectLeadingNewlineThenStrip(lhs))((cv, regexRule) => {
+        withResource(cv) {
+          _.stringReplaceWithBackrefs(regexRule.pattern, regexRule.backref)
+        }
+      })
+
+    val timestamp = asTimestampOrNull(fixedUp.incRefCount(), dtype, strfFormat, asTimestamp)
+
+    if (isTimestampFormat) {
+      // special handling to ignore "yyyy-mm-dd hh:mm:" which Spark treats
+      // as null but cuDF supports
+      withResource(timestamp) { _ =>
+        withResource(Scalar.fromNull(dtype)) { nullValue =>
+          withResource(fixedUp.matchesRe(
+            "\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\Z")) { hasNoSeconds =>
+            hasNoSeconds.ifElse(nullValue, timestamp)
+          }
+        }
+      }
+    } else {
+      timestamp
+    }
+  }
+
+  /**
+   * Filter out strings that have a newline before the first non-whitespace character
+   * and then strip all leading and trailing whitespace.
+   */
+  private def rejectLeadingNewlineThenStrip(lhs: GpuColumnVector) = {
+    withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]+")) { hasLeadingNewline =>
       withResource(Scalar.fromNull(DType.STRING)) { nullValue =>
         withResource(lhs.getBase.strip()) { stripped =>
           hasLeadingNewline.ifElse(nullValue, stripped)
         }
       }
     }
-
-
-    val fixedUp = withResource(sanitized) { t =>
-      fixUpSingleDigitComponents.foldLeft(t.incRefCount())((a, b) => {
-        withResource(a) {
-          _.stringReplaceWithBackrefs(b.pattern, b.backref)
-        }
-      })
-    }
-
-    if (isTimestampFormat) {
-      withResource(fixedUp) { stripped =>
-        // special handling to ignore "yyyy-mm-dd hh:mm:" which Spark treats
-        // as null but cuDF supports
-        withResource(stripped.matchesRe(
-            "\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\Z")) { noSeconds =>
-          withResource(Scalar.fromNull(dtype)) { nullValue =>
-            withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
-              withResource(asTimestamp(stripped, strfFormat)) { converted =>
-                withResource(isTimestamp.ifElse(converted, nullValue)) { answer =>
-                  noSeconds.ifElse(nullValue, answer)
-                }
-              }
-            }
-          }
-        }
-      }
-    } else {
-      xxx(fixedUp, dtype, strfFormat, asTimestamp)
-    }
   }
 
-  def xxx(fixedUp: ColumnVector, dtype: DType, strfFormat: String,
-          asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
-    withResource(fixedUp) { stripped =>
+  /**
+   * Parse a string column to timestamp.
+   */
+  def asTimestampOrNull(
+      cv: ColumnVector,
+      dtype: DType,
+      strfFormat: String,
+      asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
+    withResource(cv) { _ =>
       withResource(Scalar.fromNull(dtype)) { nullValue =>
-        withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
-          withResource(asTimestamp(stripped, strfFormat)) { converted =>
-            isTimestamp.ifElse(converted, nullValue)
+        withResource(cv.isTimestamp(strfFormat)) { isTimestamp =>
+          withResource(asTimestamp(cv, strfFormat)) { timestamp =>
+            isTimestamp.ifElse(timestamp, nullValue)
           }
         }
       }
     }
-
   }
 
 }
@@ -697,7 +727,7 @@ abstract class GpuToTimestamp
     val tmp = if (lhs.dataType == StringType) {
       // rhs is ignored we already parsed the format
       if (getTimeParserPolicy == LegacyTimeParserPolicy) {
-        parseStringAsTimestampLegacy(
+        parseStringAsTimestampWithLegacyParserPolicy(
           lhs,
           strfFormat,
           DType.TIMESTAMP_MICROSECONDS,
@@ -747,7 +777,7 @@ abstract class GpuToTimestampImproved extends GpuToTimestamp {
     val tmp = if (lhs.dataType == StringType) {
       // rhs is ignored we already parsed the format
       if (getTimeParserPolicy == LegacyTimeParserPolicy) {
-        parseStringAsTimestampLegacy(
+        parseStringAsTimestampWithLegacyParserPolicy(
           lhs,
           strfFormat,
           DType.TIMESTAMP_SECONDS,
