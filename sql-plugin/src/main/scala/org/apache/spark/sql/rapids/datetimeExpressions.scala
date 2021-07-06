@@ -555,6 +555,43 @@ object GpuToTimestamp extends Arm {
       dtype: DType,
       asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
 
+    // we can skip some regex if we know for sure that we are dealing with date-only formats
+    val isTimestampFormat = strfFormat match {
+      case "%Y-%m-%d" | "%d/%m/%Y" => false
+      case _ => true
+    }
+
+    // now convert single digit components to two digits, for mm, dd, hh, mm, ss
+    val fixUpDates = Seq(
+      // remove whitespace before month
+      //RegexReplace("(\\A\\d+)-([ ]+)(\\d+)-(\\d+)", "\\1-\\3-\\4"),
+      // remove whitespace before day
+      //RegexReplace("(\\A\\d+)-(\\d+)-([ ]+)(\\d+)", "\\1-\\2-\\4"),
+      // "yyyy-m-" -> "yyyy-mm-"
+      RegexReplace("(\\A\\d+)-(\\d{1}-)", "\\1-0\\2"),
+      // "yyyy-mm-d" -> "yyyy-mm-dd"
+      RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}\\Z)", "\\1-0\\2"),
+      RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}[ T])", "\\1-0\\2"),
+    )
+
+    val fixUpTimestamps = Seq(
+      // "yyyy-mm-dd h:" -> "yyyy-mm-dd hh:"
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2"),
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2})T(\\d{1}:)", "\\1T0\\2"),
+      // "yyyy-mm-dd hh:m:" -> "yyyy-mm-dd hh:mm:"
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}):(\\d{1}:)", "\\1:0\\2"),
+      // "yyyy-mm-dd hh:mm:d" -> "yyyy-mm-dd hh:mm:dd"
+      //TODO only covers if followed by certain endings .. may not be comprehensive enough yet
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ \\.])", "\\1:0\\2"),
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2"),
+    )
+
+    val fixUpSingleDigitComponents = if (isTimestampFormat) {
+      fixUpDates ++ fixUpTimestamps
+    } else {
+      fixUpDates
+    }
+
     // legacy mode does not support newline at beginning of string
     val sanitized = withResource(lhs.getBase.matchesRe("\\A[ \\t]*[\\n]")) { hasLeadingNewline =>
       withResource(Scalar.fromNull(DType.STRING)) { nullValue =>
@@ -564,50 +601,21 @@ object GpuToTimestamp extends Arm {
       }
     }
 
-    // TODO need real check or split this method into specialized versions for date vs timestamp
-    val isTimestampFormat = strfFormat.length > 10
 
-    // now convert single digit components to two digits, for mm, dd, hh, mm, ss
-    val fixUpDates = Seq(
-      // "yyyy-m-" -> "yyyy-mm-"
-      RegexReplace("(\\A\\d{4})-(\\d{1}-)", "\\1-0\\2"),
-      // "yyyy-mm-d" -> "yyyy-mm-dd"
-      RegexReplace("(\\A\\d{4}-\\d{2})-(\\d{1}\\Z)", "\\1-0\\2"),
-      RegexReplace("(\\A\\d{4}-\\d{2})-(\\d{1}[ T])", "\\1-0\\2"),
-    )
-
-    val fixUpTimestamps = Seq(
-      // "yyyy-mm-dd h:" -> "yyyy-mm-dd hh:"
-      RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2"),
-      RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2})T(\\d{1}:)", "\\1T0\\2"),
-      // "yyyy-mm-dd hh:m:" -> "yyyy-mm-dd hh:mm:"
-      RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}):(\\d{1}:)", "\\1:0\\2"),
-      // "yyyy-mm-dd hh:mm:d" -> "yyyy-mm-dd hh:mm:dd"
-      //TODO only covers if followed by certain endings .. may not be comprehensive enough yet
-      RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ .])", "\\1:0\\2"),
-      RegexReplace("(\\A\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2"),
-    )
-
-    val fixUpSingleDigitComponents = if (isTimestampFormat) {
-      fixUpDates ++ fixUpTimestamps
-    } else {
-      fixUpDates
-    }
-
-    val fixedUp = withResource(sanitized.incRefCount()) { t =>
-      fixUpSingleDigitComponents.foldLeft(t)((a, b) => {
+    val fixedUp = withResource(sanitized) { t =>
+      fixUpSingleDigitComponents.foldLeft(t.incRefCount())((a, b) => {
         withResource(a) {
           _.stringReplaceWithBackrefs(b.pattern, b.backref)
         }
       })
     }
 
-
     if (isTimestampFormat) {
       withResource(fixedUp) { stripped =>
         // special handling to ignore "yyyy-mm-dd hh:mm:" which Spark treats
         // as null but cuDF supports
-        withResource(stripped.matchesRe("\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\Z")) { noSeconds =>
+        withResource(stripped.matchesRe(
+            "\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\Z")) { noSeconds =>
           withResource(Scalar.fromNull(dtype)) { nullValue =>
             withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
               withResource(asTimestamp(stripped, strfFormat)) { converted =>
