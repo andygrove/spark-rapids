@@ -16,16 +16,23 @@
 
 package com.nvidia.spark.rapids
 
+import ai.rapids.cudf.{ColumnVector, ColumnView, DType, HostColumnVector, HostColumnVectorCore, HostMemoryBuffer}
+
 import java.sql.{Date, Timestamp}
-import scala.collection.mutable.ListBuffer
+import org.junit.jupiter.api.Assertions.{assertArrayEquals, assertEquals}
 import org.scalatest.BeforeAndAfterEach
+
+import scala.collection.mutable.ListBuffer
+import scala.util.Random
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.functions.{col, to_date, to_timestamp, unix_timestamp}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.rapids.GpuToTimestamp.{FIX_DATES, FIX_SINGLE_DIGIT_DAY_1, FIX_SINGLE_DIGIT_DAY_2, FIX_SINGLE_DIGIT_MONTH, REMOVE_WHITESPACE_FROM_MONTH_DAY, withResource}
+import org.apache.spark.sql.rapids.{GpuToTimestamp, RegexReplace}
 
-import scala.util.Random
+import java.text.SimpleDateFormat
 
 class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterEach {
 
@@ -225,6 +232,81 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     assert(cpuNowSeconds <= gpuNowSeconds)
   }
 
+  test("Regex: Remove whitespace from month and day") {
+    testRegex(REMOVE_WHITESPACE_FROM_MONTH_DAY,
+    Seq("1- 1-1", "1-1- 1", null),
+    Seq("1-1-1", "1-1-1", null))
+  }
+
+  test("Regex: Fix single digit month") {
+    testRegex(FIX_SINGLE_DIGIT_MONTH,
+      Seq("1-2-3", "1111-2-3", null),
+      Seq("1-02-3", "1111-02-3", null))
+  }
+
+  test("Regex: Fix single digit day 1") {
+    // single digit day followed by non digit
+    testRegex(FIX_SINGLE_DIGIT_DAY_1,
+      Seq("1111-02-3 ", "1111-02-3:", null),
+      Seq("1111-02-03 ", "1111-02-03:", null))
+  }
+
+  test("Regex: Fix single digit day 2") {
+    // single digit day at end of string
+    testRegex(FIX_SINGLE_DIGIT_DAY_2,
+      Seq("1-02-3", "1111-02-3", "1111-02-03", null),
+      Seq("1-02-03", "1111-02-03", "1111-02-03", null))
+  }
+
+  test("Regex: Apply all date rules") {
+    val testPairs = Seq(
+      ("1- 1-1", "1-01-01"),
+      ("1-1- 1", "1-01-01"),
+      ("1- 1- 1", "1-01-01"),
+      ("1999-12-31", "1999-12-31"),
+      ("1999-2-31", "1999-02-31"),
+      ("1999-2-3", "1999-02-03")
+    )
+    val values = testPairs.map(_._1)
+    val expected = testPairs.map(_._2)
+    withResource(ColumnVector.fromStrings(values: _*)) { v =>
+      withResource(ColumnVector.fromStrings(expected: _*)) { expected =>
+        val actual = FIX_DATES.foldLeft(v.incRefCount())((a, b) => {
+          withResource(a) {
+            _.stringReplaceWithBackrefs(b.pattern, b.backref)
+          }
+        })
+        withResource(actual) { _ =>
+          assertColumnsAreEqual(expected, actual)
+        }
+      }
+    }
+  }
+
+//  test("Parse fixed up timestamps") {
+//    // check that we can correctly parse strings that have been fixed up to remove whitespace and
+//    // to convert single digit month and day to double digit
+//    val values = Seq("1-01-01", "1999-12-31")
+//    val expected = Seq(12L, 12L)
+//    withResource(ColumnVector.fromStrings(values: _*)) { v =>
+//      withResource(ColumnVector.fromLongs(expected: _*)) { e =>
+//        val actual = GpuToTimestamp.xxx(v, DType.TIMESTAMP_MICROSECONDS, "%Y-%m-%d",
+//          (col, strfFormat) => col.asTimestampMicroseconds(strfFormat))
+//        assertColumnsAreEqual(e, actual.incRefCount())
+//      }
+//    }
+//  }
+
+  private def testRegex(rule: RegexReplace, values: Seq[String], expected: Seq[String]): Unit = {
+    withResource(ColumnVector.fromStrings(values: _*)) { v =>
+      withResource(ColumnVector.fromStrings(expected: _*)) { expected =>
+        withResource(v.stringReplaceWithBackrefs(rule.pattern, rule.backref)) { actual =>
+          assertColumnsAreEqual(expected, actual)
+        }
+      }
+    }
+  }
+
   // just show the failures so we don't have to manually parse all
   // the output to find which ones failed
   override def compareResults(
@@ -360,8 +442,9 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
 //    "11-1-1",
 //    "111-1-1",
 //    "11111-1-1",
-    //"1- 1-1"
-//    "1- 1-1",
+    "1- 1-1",
+    "1-1- 1",
+    "1- 1- 1",
 //    "\t3- 4-2",
 //    "\t3- 4-2:",
 //    "\t3-4- 2:"
@@ -377,5 +460,151 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
     Timestamp.valueOf("2015-07-25 02:02:02.2"),
     Timestamp.valueOf("1999-12-31 11:59:59.999")
   )
+
+  /**
+   * Checks and asserts that passed in columns match
+   *
+   * @param expect The expected result column
+   * @param cv     The input column
+   */
+  def assertColumnsAreEqual(expect: ColumnView, cv: ColumnView): Unit = {
+    assertColumnsAreEqual(expect, cv, "unnamed")
+  }
+
+  /**
+   * Checks and asserts that passed in columns match
+   *
+   * @param expected The expected result column
+   * @param cv       The input column
+   * @param colName  The name of the column
+   */
+  def assertColumnsAreEqual(expected: ColumnView, cv: ColumnView, colName: String): Unit = {
+    assertPartialColumnsAreEqual(expected, 0, expected.getRowCount, cv, colName, true)
+  }
+
+  /**
+   * Checks and asserts that passed in host columns match
+   *
+   * @param expected The expected result host column
+   * @param cv       The input host column
+   * @param colName  The name of the host column
+   */
+  def assertColumnsAreEqual(expected: HostColumnVector,
+                            cv: HostColumnVector, colName: String): Unit = {
+    assertPartialColumnsAreEqual(expected, 0,
+      expected.getRowCount, cv, colName, true)
+  }
+
+  // copied from cuDF test suite
+  def assertPartialColumnsAreEqual(
+                                    expected: ColumnView,
+                                    rowOffset: Long,
+                                    length: Long,
+                                    cv: ColumnView,
+                                    colName: String,
+                                    enableNullCheck: Boolean): Unit = {
+    try {
+      val hostExpected = expected.copyToHost
+      val hostcv = cv.copyToHost
+      try assertPartialColumnsAreEqual(hostExpected, rowOffset, length,
+        hostcv, colName, enableNullCheck)
+      finally {
+        if (hostExpected != null) hostExpected.close()
+        if (hostcv != null) hostcv.close()
+      }
+    }
+  }
+
+  // copied from cuDF test suite
+  def assertPartialColumnsAreEqual(
+                                    expected: HostColumnVectorCore,
+                                    rowOffset: Long, length: Long,
+                                    cv: HostColumnVectorCore,
+                                    colName: String, enableNullCheck: Boolean): Unit = {
+    assertEquals(expected.getType, cv.getType, "Type For Column " + colName)
+    assertEquals(length, cv.getRowCount, "Row Count For Column " + colName)
+    assertEquals(expected.getNumChildren, cv.getNumChildren, "Child Count for Column " + colName)
+    if (enableNullCheck) assertEquals(expected.getNullCount,
+      cv.getNullCount, "Null Count For Column " + colName)
+    else {
+      // TODO add in a proper check when null counts are
+      //  supported by serializing a partitioned column
+    }
+
+    import ai.rapids.cudf.DType.DTypeEnum._
+
+    val `type`: DType = expected.getType
+    for (expectedRow <- rowOffset until (rowOffset + length)) {
+      val tableRow: Long = expectedRow - rowOffset
+      assertEquals(expected.isNull(expectedRow), cv.isNull(tableRow),
+        "NULL for Column " + colName + " Row " + tableRow)
+      if (!expected.isNull(expectedRow)) `type`.getTypeId match {
+        case BOOL8 => // fall through
+
+        case INT8 =>
+        case UINT8 =>
+          assertEquals(expected.getByte(expectedRow), cv.getByte(tableRow),
+            "Column " + colName + " Row " + tableRow)
+
+        case INT16 =>
+        case UINT16 =>
+          assertEquals(expected.getShort(expectedRow), cv.getShort(tableRow),
+            "Column " + colName + " Row " + tableRow)
+
+        case INT32 =>
+        case UINT32 =>
+        case TIMESTAMP_DAYS =>
+        case DURATION_DAYS =>
+        case DECIMAL32 =>
+          assertEquals(expected.getInt(expectedRow), cv.getInt(tableRow),
+            "Column " + colName + " Row " + tableRow)
+
+        case INT64 =>
+        case UINT64 =>
+        case DURATION_MICROSECONDS =>
+        case DURATION_MILLISECONDS =>
+        case DURATION_NANOSECONDS =>
+        case DURATION_SECONDS =>
+        case TIMESTAMP_MICROSECONDS =>
+        case TIMESTAMP_MILLISECONDS =>
+        case TIMESTAMP_NANOSECONDS =>
+        case TIMESTAMP_SECONDS =>
+        case DECIMAL64 =>
+          assertEquals(expected.getLong(expectedRow), cv.getLong(tableRow),
+            "Column " + colName + " Row " + tableRow)
+
+        //        case FLOAT32 =>
+        //          assertEqualsWithinPercentage(expected.getFloat(expectedRow),
+        //                  cv.getFloat(tableRow), 0.0001,
+        //                  "Column " + colName + " Row " + tableRow)
+        //
+        //        case FLOAT64 =>
+        //          assertEqualsWithinPercentage(expected.getDouble(expectedRow),
+        //                  cv.getDouble(tableRow), 0.0001,
+        //                  "Column " + colName + " Row " + tableRow)
+
+        case STRING =>
+          assertArrayEquals(expected.getUTF8(expectedRow), cv.getUTF8(tableRow),
+            "Column " + colName + " Row " + tableRow)
+
+        case LIST =>
+          val expectedOffsets: HostMemoryBuffer = expected.getOffsets
+          val cvOffsets: HostMemoryBuffer = cv.getOffsets
+          val expectedChildRows: Int = expectedOffsets.getInt((expectedRow + 1) * 4) -
+            expectedOffsets.getInt(expectedRow * 4)
+          val cvChildRows: Int = cvOffsets.getInt((tableRow + 1) * 4) -
+            cvOffsets.getInt(tableRow * 4)
+          assertEquals(expectedChildRows, cvChildRows,
+            "Child row count for Column " + colName + " Row " + tableRow)
+
+        case STRUCT =>
+        // parent column only has validity which was checked above
+
+        case _ =>
+          throw new IllegalArgumentException(`type` + " is not supported yet")
+      }
+    }
+  }
+
 }
 

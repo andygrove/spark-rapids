@@ -462,6 +462,29 @@ object GpuToTimestamp extends Arm {
     "yyyy-MM-dd HH:mm:ss"
   )
 
+  /** remove whitespace before month and day */
+  val REMOVE_WHITESPACE_FROM_MONTH_DAY: RegexReplace =
+    RegexReplace("(\\A\\d+)-([ ]*)(\\d+)-([ ]*)(\\d+)", "\\1-\\3-\\5")
+
+  /** Regex rule to replace "yyyy-m-" with "yyyy-mm-" */
+  val FIX_SINGLE_DIGIT_MONTH: RegexReplace =
+    RegexReplace("(\\A\\d+)-(\\d{1}-)", "\\1-0\\2")
+
+  /** Regex rule to replace "yyyy-mm-d" with "yyyy-mm-dd" */
+  val FIX_SINGLE_DIGIT_DAY_1: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}[\\D]+)", "\\1-0\\2")
+
+  /** Regex rule to replace "yyyy-mm-d" with "yyyy-mm-dd" */
+  val FIX_SINGLE_DIGIT_DAY_2: RegexReplace =
+    RegexReplace("(\\A\\d+-\\d{2})-(\\d{1})\\Z", "\\1-0\\2")
+
+  /** Convert dates to standard format */
+  val FIX_DATES = Seq(
+    REMOVE_WHITESPACE_FROM_MONTH_DAY,
+    FIX_SINGLE_DIGIT_MONTH,
+    FIX_SINGLE_DIGIT_DAY_1,
+    FIX_SINGLE_DIGIT_DAY_2)
+
   def daysScalarSeconds(name: String): Scalar = {
     Scalar.timestampFromLong(DType.TIMESTAMP_SECONDS, DateUtils.specialDatesSeconds(name))
   }
@@ -561,19 +584,6 @@ object GpuToTimestamp extends Arm {
       case _ => true
     }
 
-    // now convert single digit components to two digits, for mm, dd, hh, mm, ss
-    val fixUpDates = Seq(
-      // remove whitespace before month
-      //RegexReplace("(\\A\\d+)-([ ]+)(\\d+)-(\\d+)", "\\1-\\3-\\4"),
-      // remove whitespace before day
-      //RegexReplace("(\\A\\d+)-(\\d+)-([ ]+)(\\d+)", "\\1-\\2-\\4"),
-      // "yyyy-m-" -> "yyyy-mm-"
-      RegexReplace("(\\A\\d+)-(\\d{1}-)", "\\1-0\\2"),
-      // "yyyy-mm-d" -> "yyyy-mm-dd"
-      RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}\\Z)", "\\1-0\\2"),
-      RegexReplace("(\\A\\d+-\\d{2})-(\\d{1}[ T])", "\\1-0\\2"),
-    )
-
     val fixUpTimestamps = Seq(
       // "yyyy-mm-dd h:" -> "yyyy-mm-dd hh:"
       RegexReplace("(\\A\\d+-\\d{2}-\\d{2}) (\\d{1}:)", "\\1 0\\2"),
@@ -583,13 +593,13 @@ object GpuToTimestamp extends Arm {
       // "yyyy-mm-dd hh:mm:d" -> "yyyy-mm-dd hh:mm:dd"
       //TODO only covers if followed by certain endings .. may not be comprehensive enough yet
       RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1}[ \\.])", "\\1:0\\2"),
-      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2"),
+      RegexReplace("(\\A\\d+-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}):(\\d{1})\\Z", "\\1:0\\2")
     )
 
     val fixUpSingleDigitComponents = if (isTimestampFormat) {
-      fixUpDates ++ fixUpTimestamps
+      FIX_DATES ++ fixUpTimestamps
     } else {
-      fixUpDates
+      FIX_DATES
     }
 
     // legacy mode does not support newline at beginning of string
@@ -628,16 +638,22 @@ object GpuToTimestamp extends Arm {
         }
       }
     } else {
-      withResource(fixedUp) { stripped =>
-        withResource(Scalar.fromNull(dtype)) { nullValue =>
-          withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
-            withResource(asTimestamp(stripped, strfFormat)) { converted =>
-              isTimestamp.ifElse(converted, nullValue)
-            }
+      xxx(fixedUp, dtype, strfFormat, asTimestamp)
+    }
+  }
+
+  def xxx(fixedUp: ColumnVector, dtype: DType, strfFormat: String,
+          asTimestamp: (ColumnVector, String) => ColumnVector): ColumnVector = {
+    withResource(fixedUp) { stripped =>
+      withResource(Scalar.fromNull(dtype)) { nullValue =>
+        withResource(stripped.isTimestamp(strfFormat)) { isTimestamp =>
+          withResource(asTimestamp(stripped, strfFormat)) { converted =>
+            isTimestamp.ifElse(converted, nullValue)
           }
         }
       }
     }
+
   }
 
 }
