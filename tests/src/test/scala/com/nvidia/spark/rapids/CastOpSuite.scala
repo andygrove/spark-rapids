@@ -16,19 +16,20 @@
 
 package com.nvidia.spark.rapids
 
+import ai.rapids.cudf.ColumnVector
+
 import java.io.File
 import java.nio.file.Files
 import java.sql.Timestamp
 import java.time.LocalDateTime
 import java.util.TimeZone
-
 import scala.collection.JavaConverters._
 import scala.util.Random
-
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AnsiCast, Cast}
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.rapids.GpuToTimestamp.FIX_DATES
 import org.apache.spark.sql.types._
 
 class CastOpSuite extends GpuExpressionTestSuite {
@@ -693,6 +694,29 @@ class CastOpSuite extends GpuExpressionTestSuite {
       testCastToDecimal(DataTypes.StringType, scale = scale,
         customDataGenerator = Some(exponentsAsStrings),
         ansiEnabled = true)
+    }
+  }
+
+  test("CAST string to date - sanitize step") {
+    val testPairs = Seq(
+      ("2001-1", "2001-01"),
+      ("2001-01-1", "2001-01-01"),
+      ("2001-1-1", "2001-01-01"),
+      ("2001-01-1", "2001-01-01"),
+      ("2001-01-1 ", "2001-01-01 "),
+      ("2001-1-1 ", "2001-01-01 "),
+      ("2001-1-1 ZZZ", "2001-01-01 ZZZ"),
+      ("2001-1-1TZZZ", "2001-01-01TZZZ"),
+      ("3330-7 39 49: 1", "3330-7 39 49: 1")
+    )
+    val inputs = testPairs.map(_._1)
+    val expected = testPairs.map(_._2)
+    withResource(ColumnVector.fromStrings(inputs: _*)) { v =>
+      withResource(ColumnVector.fromStrings(expected: _*)) { expected =>
+        withResource(GpuCast.sanitizeStringToDate(v)) { actual =>
+          CudfTestHelper.assertColumnsAreEqual(expected, actual)
+        }
+      }
     }
   }
 
