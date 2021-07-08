@@ -873,6 +873,18 @@ case class GpuCast(
     }
   }
 
+  /**
+   * Trims and parses a given UTF8 date string to a corresponding [[Int]] value.
+   * The return type is [[Option]] in order to distinguish between 0 and null. The following
+   * formats are allowed:
+   *
+   * `yyyy`
+   * `yyyy-[m]m`
+   * `yyyy-[m]m-[d]d`
+   * `yyyy-[m]m-[d]d `
+   * `yyyy-[m]m-[d]d *`
+   * `yyyy-[m]m-[d]dT*`
+   */
   private def castStringToDate(input: ColumnVector): ColumnVector = {
 
     var sanitizedInput = input.incRefCount()
@@ -1000,6 +1012,23 @@ case class GpuCast(
     }
   }
 
+  /**
+   * Trims and parses a given UTF8 timestamp string to the corresponding a corresponding [[Long]]
+   * value. The return type is [[Option]] in order to distinguish between 0L and null. The following
+   * formats are allowed:
+   *
+   * `yyyy`
+   * `yyyy-[m]m`
+   * `yyyy-[m]m-[d]d`
+   * `yyyy-[m]m-[d]d `
+   * `yyyy-[m]m-[d]d [h]h:[m]m:[s]s.[ms][ms][ms][us][us][us][zone_id]`
+   * `yyyy-[m]m-[d]dT[h]h:[m]m:[s]s.[ms][ms][ms][us][us][us][zone_id]`
+   * `[h]h:[m]m:[s]s.[ms][ms][ms][us][us][us][zone_id]`
+   * `T[h]h:[m]m:[s]s.[ms][ms][ms][us][us][us][zone_id]`
+   *
+   * where `zone_id` should have one of the forms:
+   *   - Z - Zulu time zone UTC+0
+   */
   private def castStringToTimestamp(input: ColumnVector): ColumnVector = {
 
     // special timestamps

@@ -345,6 +345,24 @@ class EnhancedRandom(protected val r: Random, protected val options: FuzzerOptio
     }
   }
 
+  def nextString(length: Int, validChars: String, prefix: Option[String] = None): String = {
+    prefix match {
+      case Some(p) =>
+        val b = new StringBuilder(length + p.length)
+        b.append(prefix)
+        for (_ <- 0 until length) {
+          b.append(validChars.charAt(r.nextInt(validChars.length)))
+        }
+        b.toString
+      case _ =>
+        val b = new StringBuilder(length)
+        for (_ <- 0 until length) {
+          b.append(validChars.charAt(r.nextInt(validChars.length)))
+        }
+        b.toString
+    }
+  }
+
   def nextDate(): Date = {
     val futureDate = 6321706291000L // Upper limit Sunday, April 29, 2170 9:31:31 PM
     new Date((futureDate * r.nextDouble()).toLong);
@@ -357,7 +375,7 @@ class EnhancedRandom(protected val r: Random, protected val options: FuzzerOptio
 
   private def generateString(): String = {
     if (options.asciiStringsOnly) {
-      val b = new StringBuilder()
+      val b = new StringBuilder(options.maxStringLen)
       for (_ <- 0 until options.maxStringLen) {
         b.append(ASCII_CHARS.charAt(r.nextInt(ASCII_CHARS.length)))
       }

@@ -23,6 +23,7 @@ import java.time.LocalDateTime
 import java.util.TimeZone
 
 import scala.collection.JavaConverters._
+import scala.util.Random
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
@@ -79,7 +80,7 @@ class CastOpSuite extends GpuExpressionTestSuite {
               try {
                 val (fromCpu, fromGpu) =
                   runOnCpuAndGpu(generateInRangeTestData(from, to, ansiEnabled),
-                  frame => frame.select(col("c0").cast(to))
+                  frame => frame.select(col("c0"), col("c0").cast(to))
                     .orderBy(col("c0")), conf)
 
                 // perform comparison logic specific to the cast
@@ -105,8 +106,8 @@ class CastOpSuite extends GpuExpressionTestSuite {
   private def compareFloatToStringResults(fromCpu: Array[Row], fromGpu: Array[Row]) = {
     fromCpu.zip(fromGpu).foreach {
       case (c, g) =>
-        val cpuValue = c.getAs[String](0)
-        val gpuValue = g.getAs[String](0)
+        val cpuValue = c.getAs[String](1)
+        val gpuValue = g.getAs[String](1)
         if (!compareStringifiedFloats(cpuValue, gpuValue)) {
           fail(s"Running on the GPU and on the CPU did not match: CPU " +
             s"value: $cpuValue. GPU value: $gpuValue.")
@@ -805,6 +806,32 @@ class CastOpSuite extends GpuExpressionTestSuite {
         ss.createDataFrame(row, StructType(Seq(StructField("col", dt))))
     }
   }
+
+  // just show the failures so we don't have to manually parse all
+  // the output to find which ones failed
+  override def compareResults(
+      sort: Boolean,
+      maxFloatDiff: Double,
+      fromCpu: Array[Row],
+      fromGpu: Array[Row]): Unit = {
+    assert(fromCpu.length === fromGpu.length)
+
+    val failures = fromCpu.zip(fromGpu).zipWithIndex.filterNot {
+      case ((cpu, gpu), _) => super.compare(cpu, gpu, 0.0001)
+    }
+
+    if (failures.nonEmpty) {
+      val str = failures.map {
+        case ((cpu, gpu), i) =>
+          s"""
+             |[#$i] CPU: $cpu
+             |[#$i] GPU: $gpu
+             |
+             |""".stripMargin
+      }.mkString("\n")
+      fail(s"Mismatch between CPU and GPU for the following rows:\n$str")
+    }
+  }
 }
 
 /** Data shared between CastOpSuite and AnsiCastOpSuite. */
@@ -1059,6 +1086,20 @@ object CastOpSuite {
         "2010-1-7 T")
     }
 
+    val fuzzValues: Seq[String] = if (validOnly) {
+      Seq.empty
+    } else {
+      // generate random strings using characters that are valid in timestamps
+      val r = new Random(0)
+      val random = new EnhancedRandom(r, FuzzerOptions())
+      val validChars = "0123456789 \t\r\n+-:.ZT"
+      (0 until 10000).flatMap { _ => Seq(
+          random.nextString(r.nextInt(10), validChars),
+          random.nextString(r.nextInt(20), validChars),
+          random.nextString(r.nextInt(30), validChars))
+      }
+    }
+
     val timestampWithoutDate = if (validOnly && !castStringToTimestamp) {
       // 3.2.0+ throws exceptions on string to date ANSI cast errors
       Seq.empty
@@ -1075,7 +1116,8 @@ object CastOpSuite {
         validYearMonthDay ++
         invalidValues ++
         validTimestamps ++
-        timestampWithoutDate
+        timestampWithoutDate ++
+        fuzzValues
 
     // these partial timestamp formats are not yet supported in cast string to timestamp but are
     // supported by cast string to date
