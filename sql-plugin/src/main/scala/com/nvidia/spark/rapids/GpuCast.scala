@@ -18,9 +18,12 @@ package com.nvidia.spark.rapids
 
 import java.text.SimpleDateFormat
 import java.time.DateTimeException
+
 import scala.collection.mutable.ArrayBuffer
+
 import ai.rapids.cudf.{BinaryOp, ColumnVector, ColumnView, DType, Scalar}
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
+
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
 import org.apache.spark.sql.catalyst.expressions.{Cast, CastBase, Expression, NullIntolerant, TimeZoneAwareExpression}
 import org.apache.spark.sql.internal.SQLConf
@@ -173,46 +176,53 @@ object GpuCast extends Arm {
     })
   }
 
-  def sanitizeStringToIntegralType(input: ColumnView, ansiEnabled: Boolean): ColumnVector = {
+  /**
+   * input is assumed to already have been stripped of leading and trailing whitespace
+   */
+  def sanitizeStringToIntegralType(input: ColumnVector, ansiEnabled: Boolean): ColumnVector = {
 
     // remove leading non-breaking whitespace and trailing whitespace, and filter out any
     // strings that contain whitespace within the string
-    val stripped = withResource(input.strip()) { stripped =>
-      withResource(GpuScalar.from(null, DataTypes.StringType)) { nullVal =>
-        withResource(stripped.containsRe("\\s")) { hasWhitespace =>
-          if (ansiEnabled) {
-            withResource(hasWhitespace.any()) { any =>
-              if (any.getBoolean) {
-                throw new NumberFormatException(GpuCast.INVALID_INPUT_MESSAGE)
-              }
+    val sanitized = withResource(GpuScalar.from(null, DataTypes.StringType)) { nullVal =>
+      withResource(input.containsRe("\\s")) { hasWhitespace =>
+        if (ansiEnabled) {
+          withResource(hasWhitespace.any()) { any =>
+            if (any.getBoolean) {
+              throw new NumberFormatException(GpuCast.INVALID_INPUT_MESSAGE)
             }
-            stripped.incRefCount()
-          } else {
-            hasWhitespace.ifElse(nullVal, stripped)
           }
+          input.incRefCount()
+        } else {
+          hasWhitespace.ifElse(nullVal, input)
         }
       }
     }
 
     // truncate strings that represent decimals, so that we just look at the string before the dot
-    withResource(stripped) { _ =>
-      withResource(Scalar.fromString(".")) { dot =>
-        withResource(stripped.stringContains(dot)) { hasDot =>
-          // only do the decimal sanitization if any strings do contain dot
-          withResource(hasDot.any(DType.BOOL8)) { anyDot =>
-            if (anyDot.getBoolean) {
-              withResource(stripped.matchesRe("^\\.[0-9]+$")) { startsWithDot =>
-                withResource(stripped.extractRe("^([+\\-]?[0-9]*)\\.([0-9]*)?$")) { table =>
-                  withResource(Scalar.fromString("0")) { zero =>
-                    withResource(startsWithDot.ifElse(zero, table.getColumn(0).incRefCount())) {
-                      decimal =>
-                        hasDot.ifElse(decimal, stripped)
+    if (ansiEnabled) {
+      // ansi mode does not support casting decimal strings to integers
+      sanitized.incRefCount()
+    } else {
+      withResource(sanitized) { _ =>
+        withResource(Scalar.fromString(".")) { dot =>
+          withResource(sanitized.stringContains(dot)) { hasDot =>
+            // only do the decimal sanitization if any strings do contain dot
+            withResource(hasDot.any(DType.BOOL8)) { anyDot =>
+              if (anyDot.getBoolean) {
+                // Special handling for strings that have no numeric value before the dot, such
+                // as ".", ".1" and "-.2"
+                withResource(sanitized.matchesRe("^[+\\-]?\\.[0-9]*$")) { startsWithDot =>
+                  withResource(sanitized.extractRe("^([+\\-]?[0-9]*)\\.([0-9]*)?$")) { table =>
+                    withResource(Scalar.fromString("0")) { zero =>
+                      withResource(startsWithDot.ifElse(zero, table.getColumn(0).incRefCount())) {
+                        decimal => hasDot.ifElse(decimal, sanitized)
+                      }
                     }
                   }
                 }
+              } else {
+                sanitized.incRefCount()
               }
-            } else {
-              stripped.incRefCount()
             }
           }
         }
@@ -449,31 +459,22 @@ case class GpuCast(
         castFloatingTypeToString(input)
       case (StringType, BooleanType | ByteType | ShortType | IntegerType | LongType | FloatType
                         | DoubleType | DateType | TimestampType) =>
-
-
-        toDataType match {
-          case BooleanType =>
-            withResource(input.strip()) { trimmed =>
+        withResource(input.strip()) { trimmed =>
+          toDataType match {
+            case BooleanType =>
               castStringToBool(trimmed, ansiMode)
-            }
-          case DateType =>
-            withResource(input.strip()) { trimmed =>
+            case DateType =>
               castStringToDate(trimmed)
-            }
-          case TimestampType =>
-            withResource(input.strip()) { trimmed =>
+            case TimestampType =>
               castStringToTimestamp(trimmed)
-            }
-          case FloatType | DoubleType =>
-            withResource(input.strip()) { trimmed =>
+            case FloatType | DoubleType =>
               castStringToFloats(trimmed, ansiMode,
                 GpuColumnVector.getNonNestedRapidsType(toDataType))
-            }
-          case ByteType | ShortType | IntegerType | LongType =>
-            castStringToInts(input, ansiMode,
-              GpuColumnVector.getNonNestedRapidsType(toDataType))
+            case ByteType | ShortType | IntegerType | LongType =>
+              castStringToInts(trimmed, ansiMode,
+                GpuColumnVector.getNonNestedRapidsType(toDataType))
+          }
         }
-
       case (StringType, dt: DecimalType) =>
         // To apply HALF_UP rounding strategy during casting to decimal, we firstly cast
         // string to fp64. Then, cast fp64 to target decimal type to enforce HALF_UP rounding.
@@ -731,76 +732,29 @@ case class GpuCast(
   }
 
   def castStringToInts(
-      input: ColumnView,
+      input: ColumnVector,
       ansiEnabled: Boolean,
       dType: DType): ColumnVector = {
 
     // allow leading whitespace but replace strings with null if they contain any other whitespace
     val stripped = GpuCast.sanitizeStringToIntegralType(input, ansiEnabled)
-    //TODO test with
-    // 1.23e4
-    // .23e4
-    // .e4
 
-
-
-    withResource(stripped) { _ =>
-      withResource(stripped.isInteger(dType)) { isInt =>
-        if (ansiEnabled) {
-          withResource(isInt.all()) { allInts =>
-            if (!allInts.getBoolean) {
-              throw new NumberFormatException(GpuCast.INVALID_INPUT_MESSAGE)
-            }
+    withResource(stripped.isInteger(dType)) { isInt =>
+      if (ansiEnabled) {
+        withResource(isInt.all()) { allInts =>
+          if (!allInts.getBoolean) {
+            throw new NumberFormatException(GpuCast.INVALID_INPUT_MESSAGE)
           }
-          stripped.castTo(dType)
-        } else {
-          withResource(stripped.castTo(dType)) { parsedInt =>
-            withResource(GpuScalar.from(null, dataType)) { nullVal =>
-              isInt.ifElse(parsedInt, nullVal)
-            }
+        }
+        stripped.castTo(dType)
+      } else {
+        withResource(stripped.castTo(dType)) { parsedInt =>
+          withResource(GpuScalar.from(null, dataType)) { nullVal =>
+            isInt.ifElse(parsedInt, nullVal)
           }
         }
       }
     }
-
-//
-//      //TODO why we only do this check if ansi is not enabled?
-//      if (!ansiEnabled) {
-//        // TODO would be great to get rid of this regex, but the overflow checks don't work
-//        //  on the more lenient pattern.
-//        // To avoid doing the expensive regex all the time, we will first check to see if we need
-//        // to do it. The only time we do need to do it is when we have a '.' in any of the strings.
-//        val data = whitespaceSanitized.getData
-//        val hasDot = if (data != null) {
-//          withResource(
-//            ColumnView.fromDeviceBuffer(data, 0, DType.INT8, data.getLength.toInt)) { childData =>
-//            withResource(GpuScalar.from('.'.toByte, ByteType)) { dot =>
-//              childData.contains(dot)
-//            }
-//          }
-//        } else {
-//          false
-//        }
-//
-//        if (hasDot) {
-//
-//
-//
-//          // handle case where capture group is null because string starts with dot
-//          withResource(intPart.isNull) { isNull =>
-//            withResource(Scalar.fromString("0")) { zero =>
-//              isNull.ifElse(zero, intPart)
-//            }
-//          }
-//        } else {
-//          whitespaceSanitized.incRefCount() // TODO incRefCount needed?
-//        }
-//      } else {
-//        whitespaceSanitized.incRefCount() // TODO incRefCount needed?
-//      }
-//    }
-
-
   }
 
   def castStringToFloats(
