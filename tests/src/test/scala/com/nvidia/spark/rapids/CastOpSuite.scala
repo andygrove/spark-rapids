@@ -851,14 +851,14 @@ class CastOpSuite extends GpuExpressionTestSuite {
 
   test("CAST string to integer - sanitize step") {
     val testPairs: Seq[(String, String)] = Seq(
-      (" 123", "123"),
-      ("\r\r\t\n11.12380", "11.12380"),
-      ("-.2", "-.2"),
-      ("   062982422", "062982422"),
-      ("\t.123", ".123"),
-      ("0.123", "0.123"),
+      ("123", "123"),
+      (".", "0"),
+      (".2", "0"),
+      ("-.2", "0"),
+      ("0.123", "0"),
+      ("321.123", "321"),
       ("0.123\r123", null),
-      ("\r123", null)
+      (".\r123", null)
     )
     val inputs = testPairs.map(_._1)
     val expected = testPairs.map(_._2)
