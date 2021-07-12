@@ -21,11 +21,10 @@ import java.nio.file.Files
 import java.sql.Timestamp
 import java.time.LocalDateTime
 import java.util.TimeZone
+import ai.rapids.cudf.{ColumnVector, DType}
 
-import ai.rapids.cudf.ColumnVector
 import scala.collection.JavaConverters._
 import scala.util.Random
-
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AnsiCast, Cast}
@@ -81,7 +80,7 @@ class CastOpSuite extends GpuExpressionTestSuite {
     castRandomStrings(DataTypes.ShortType, NUMERIC_CHARS)
   }
 
-  ignore("Cast from string to int using random inputs") {
+  test("Cast from string to int using random inputs") {
     // Test ignored due to known issues
     // https://github.com/NVIDIA/spark-rapids/issues/2899
     castRandomStrings(DataTypes.IntegerType, NUMERIC_CHARS)
@@ -169,7 +168,8 @@ class CastOpSuite extends GpuExpressionTestSuite {
       val cpuValue = cpuRow.get(2)
       val gpuValue = gpuRow.get(2)
       if (!compare(cpuValue, gpuValue)) {
-        fail(s"Mismatch casting string [${cpuRow.getString(1)}] " +
+        val inputValue = cpuRow.getString(1)
+        fail(s"Mismatch casting string [$inputValue] " +
           s"to $toType. CPU: $cpuValue; GPU: $gpuValue")
       }
     }
@@ -812,6 +812,54 @@ class CastOpSuite extends GpuExpressionTestSuite {
       testCastToDecimal(DataTypes.StringType, scale = scale,
         customDataGenerator = Some(exponentsAsStrings),
         ansiEnabled = true)
+    }
+  }
+
+  test("check for whitespace") {
+    val inputs = Seq("123", "6965\r23E++2", "a\naE")
+    val expected: Seq[java.lang.Boolean] = Seq(false, true, true)
+    withResource(ColumnVector.fromStrings(inputs: _*)) { v =>
+      withResource(ColumnVector.fromBoxedBooleans(expected: _*)) { expected =>
+        withResource(v.strip()) { stripped =>
+          withResource(stripped.containsRe("\\s")) { actual =>
+            CudfTestHelper.assertColumnsAreEqual(expected, actual)
+          }
+        }
+      }
+    }
+  }
+
+  // sanity check
+  test("check for strip") {
+    val inputs = Seq("062982422")
+    val expected: Seq[java.lang.Boolean] = Seq(true)
+    withResource(ColumnVector.fromStrings(inputs: _*)) { v =>
+      withResource(ColumnVector.fromBoxedBooleans(expected: _*)) { expected =>
+        withResource(v.isInteger(DType.INT32)) { actual =>
+          CudfTestHelper.assertColumnsAreEqual(expected, actual)
+        }
+      }
+    }
+  }
+
+  test("CAST string to integer - sanitize step") {
+    val testPairs: Seq[(String, String)] = Seq(
+//      (" 123", "123"),
+      //("\r\r\t\n11.12380")
+      ("   062982422", "062982422"),
+//      ("\t.123", ".123"),
+//      ("0.123", "0.123"),
+//      ("0.123\r123", null),
+      ("\r123", null)
+    )
+    val inputs = testPairs.map(_._1)
+    val expected = testPairs.map(_._2)
+    withResource(ColumnVector.fromStrings(inputs: _*)) { v =>
+      withResource(ColumnVector.fromStrings(expected: _*)) { expected =>
+        withResource(GpuCast.sanitizeStringToIntegralType(v, ansiEnabled = false)) { actual =>
+          CudfTestHelper.assertColumnsAreEqual(expected, actual)
+        }
+      }
     }
   }
 
