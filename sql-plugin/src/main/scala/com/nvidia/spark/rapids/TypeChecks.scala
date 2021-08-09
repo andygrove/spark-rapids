@@ -790,6 +790,7 @@ object FileFormatChecks {
  */
 class ExecChecks private(
     check: TypeSig,
+    val extendedChecks: Map[String, TypeSig],
     sparkSig: TypeSig,
     override val shown: Boolean = true)
     extends TypeChecks[SupportLevel] {
@@ -811,15 +812,24 @@ class ExecChecks private(
 
   override def support(dataType: TypeEnum.Value): SupportLevel =
     check.getSupportLevel(dataType, sparkSig)
+
+  def supportExtended(fieldName: String, dataType: TypeEnum.Value): SupportLevel =
+    extendedChecks(fieldName).getSupportLevel(dataType, sparkSig)
 }
 
 /**
  * gives users an API to create ExecChecks.
  */
 object ExecChecks {
-  def apply(check: TypeSig, sparkSig: TypeSig) : ExecChecks = new ExecChecks(check, sparkSig)
-
-  def hiddenHack() = new ExecChecks(TypeSig.all, TypeSig.all, shown = false)
+  def apply(check: TypeSig, sparkSig: TypeSig) : ExecChecks = {
+    new ExecChecks(check, Map.empty, sparkSig)
+  }
+  def foo(check: TypeSig, otherChecks: Map[String, TypeSig], sparkSig: TypeSig) : ExecChecks = {
+    new ExecChecks(check, otherChecks, sparkSig)
+  }
+  def hiddenHack() = {
+    new ExecChecks(TypeSig.all, Map.empty, TypeSig.all, shown = false)
+  }
 }
 
 /**
@@ -1542,6 +1552,14 @@ object SupportedOpsDocs {
           TypeEnum.values.foreach { t =>
             println(exprChecks.support(t).htmlTag)
           }
+
+          val set = exprChecks.extendedChecks.keySet.toSeq.sorted
+          set.foreach { k =>
+            TypeEnum.values.foreach { t =>
+              println(exprChecks.supportExtended(k, t).htmlTag)
+            }
+          }
+
         } else {
           TypeEnum.values.foreach { _ =>
             println("<td><b>TODO</b></td>")
