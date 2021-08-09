@@ -1377,6 +1377,7 @@ object SupportedOpsDocs {
   private def execChecksHeaderLine(): Unit = {
     println("<tr>")
     println("<th>Executor</th>")
+    println("<th>Context</th>")
     println("<th>Description</th>")
     println("<th>Notes</th>")
     TypeEnum.values.foreach { t =>
@@ -1545,6 +1546,7 @@ object SupportedOpsDocs {
         }
         println("<tr>")
         println(s"<td>${rule.tag.runtimeClass.getSimpleName}</td>")
+        println(s"<td>Input</td>")
         println(s"<td>${rule.description}</td>")
         println(s"<td>${rule.notes().getOrElse("None")}</td>")
         if (checks.isDefined) {
@@ -1553,12 +1555,6 @@ object SupportedOpsDocs {
             println(exprChecks.support(t).htmlTag)
           }
 
-          val set = exprChecks.extendedChecks.keySet.toSeq.sorted
-          set.foreach { k =>
-            TypeEnum.values.foreach { t =>
-              println(exprChecks.supportExtended(k, t).htmlTag)
-            }
-          }
 
         } else {
           TypeEnum.values.foreach { _ =>
@@ -1566,6 +1562,24 @@ object SupportedOpsDocs {
           }
         }
         println("</tr>")
+
+        // extended checks
+        if (checks.isDefined) {
+          val exprChecks = checks.get.asInstanceOf[ExecChecks]
+          val set = exprChecks.extendedChecks.keySet.toSeq.sorted
+          set.foreach { k =>
+            println("<tr>")
+            println(s"<td>${rule.tag.runtimeClass.getSimpleName}</td>")
+            println(s"<td>$k</td>")
+            println(s"<td>${rule.description}</td>")
+            println(s"<td>${rule.notes().getOrElse("None")}</td>")
+            TypeEnum.values.foreach { t =>
+              println(exprChecks.supportExtended(k, t).htmlTag)
+            }
+            println("</tr>")
+          }
+        }
+
         totalCount += 1
       }
     }
