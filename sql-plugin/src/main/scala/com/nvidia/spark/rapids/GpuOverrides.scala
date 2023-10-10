@@ -3507,6 +3507,19 @@ object GpuOverrides extends Logging {
           GpuJsonToStructs(a.schema, a.options, child, a.timeZoneId)
       }).disabledByDefault("parsing JSON from a column has a large number of issues and " +
       "should be considered beta quality right now."),
+    expr[StructsToJson](
+      "TODO",
+      ExprChecks.projectOnly(
+        TypeSig.MAP.nested(TypeSig.STRING).withPsNote(TypeEnum.MAP,
+          "MAP only supports keys and values that are of STRING type"),
+        (TypeSig.STRUCT + TypeSig.MAP + TypeSig.ARRAY).nested(TypeSig.all),
+        Seq(ParamCheck("jsonStr", TypeSig.STRING, TypeSig.STRING))),
+      (a, conf, p, r) => new UnaryExprMeta[StructsToJson](a, conf, p, r) {
+        override def tagExprForGpu(): Unit = {}
+
+        override def convertToGpu(child: Expression): GpuExpression =
+          GpuStructsToJson(a.options, child, a.timeZoneId)
+      }).disabledByDefault("TODO"),
     expr[JsonTuple](
       "Returns a tuple like the function get_json_object, but it takes multiple names. " +
         "All the input parameters and output column types are string.",
