@@ -957,7 +957,7 @@ object GpuCast {
     }
   }
 
-  private def castStructToString(
+  def castStructToString(
       input: ColumnView,
       inputSchema: Array[StructField],
       options: CastOptions): ColumnVector = {

@@ -17,17 +17,18 @@
 package org.apache.spark.sql.rapids
 
 import ai.rapids.cudf.ColumnVector
-import com.nvidia.spark.rapids.{GpuCast, GpuColumnVector, GpuUnaryExpression}
+import com.nvidia.spark.rapids.{CastOptions, GpuCast, GpuColumnVector, GpuUnaryExpression}
 
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.types.{DataType, StringType}
+import org.apache.spark.sql.types.{DataType, StringType, StructType}
 
 case class GpuStructsToJson(
   options: Map[String, String],
   child: Expression,
   timeZoneId: Option[String] = None) extends GpuUnaryExpression {
   override protected def doColumnar(input: GpuColumnVector): ColumnVector = {
-    GpuCast.doCast(input.getBase, child.dataType, StringType)
+    GpuCast.castStructToString(input.getBase, child.dataType.asInstanceOf[StructType].fields,
+      CastOptions.DEFAULT_CAST_OPTIONS)
   }
 
   override def dataType: DataType = StringType
