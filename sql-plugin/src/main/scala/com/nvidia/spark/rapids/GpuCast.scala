@@ -189,7 +189,8 @@ object CastOptions {
   def getArithmeticCastOptions(failOnError: Boolean): CastOptions = 
     if (failOnError) ARITH_ANSI_OPTIONS else DEFAULT_CAST_OPTIONS
 
-  object ToPrettyStringOptions extends CastOptions(false, false, false) {
+  object ToPrettyStringOptions extends CastOptions(false, false, false,
+      includeStructColumnNames = false) {
     override val leftBracket: String = "{"
 
     override val rightBracket: String = "}"
@@ -199,6 +200,7 @@ object CastOptions {
     override val useDecimalPlainString: Boolean = true
 
     override val useHexFormatForBinary: Boolean = true
+
   }
 }
 
@@ -213,7 +215,8 @@ object CastOptions {
 class CastOptions(
     legacyCastComplexTypesToString: Boolean,
     ansiMode: Boolean,
-    stringToDateAnsiMode: Boolean) extends Serializable {
+    stringToDateAnsiMode: Boolean,
+    includeStructColumnNames: Boolean = false) extends Serializable {
 
   /**
    * Retuns the left bracket to use when surrounding brackets when converting
@@ -957,15 +960,17 @@ object GpuCast {
     }
   }
 
-  private def castStructToString(
+  def castStructToString(
       input: ColumnView,
       inputSchema: Array[StructField],
       options: CastOptions): ColumnVector = {
 
     import options._
 
+    val jsonStructFormat = true // TODO options.includeStructColumnNames
+
     val emptyStr = ""
-    val separatorStr = if (useLegacyComplexTypesToString) "," else ", "
+    val separatorStr = if (useLegacyComplexTypesToString || jsonStructFormat) "," else ", "
     val spaceStr = " "
     val numRows = input.getRowCount.toInt
     val numInputColumns = input.getNumChildren
@@ -978,24 +983,62 @@ object GpuCast {
         leftColumn: ColumnVector,
         rightColumn: ColumnVector): ColumnVector = {
       withResource(ArrayBuffer.empty[ColumnVector]) { columns =>
+
+        // TODO withResource
+        val colon = ColumnVector.fromScalar(Scalar.fromString(":"),
+          leftColumn.getRowCount.toInt)
+        val quote = ColumnVector.fromScalar(Scalar.fromString("\""),
+            leftColumn.getRowCount.toInt)
+
         // legacy: [firstCol
         //   3.1+: {firstCol
         columns += leftColumn.incRefCount()
-        withResource(input.getChildColumnView(0)) { firstColumnView =>
-          columns += castToString(firstColumnView, inputSchema.head.dataType, options)
+
+        if (jsonStructFormat) {
+          withResource(Scalar.fromString("\"" + inputSchema(0).name + "\"")) { _name =>
+            columns += ColumnVector.fromScalar(_name, leftColumn.getRowCount.toInt)
+            columns += colon.incRefCount()
+          }
         }
+
+        withResource(input.getChildColumnView(0)) { firstColumnView =>
+          val needsQuoting = jsonStructFormat && inputSchema(0).dataType == DataTypes.StringType
+          if (needsQuoting) {
+            columns += quote.incRefCount()
+          }
+          columns += castToString(firstColumnView, inputSchema.head.dataType, options)
+          if (needsQuoting) {
+            columns += quote.incRefCount()
+          }
+        }
+
         for (nonFirstIndex <- 1 until numInputColumns) {
           withResource(input.getChildColumnView(nonFirstIndex)) { nonFirstColumnView =>
             // legacy: ","
             //   3.1+: ", "
             columns += sepColumn.incRefCount()
+
+            withResource(Scalar.fromString(
+              "\"" + inputSchema(nonFirstIndex).name + "\"")) { _name =>
+              columns += ColumnVector.fromScalar(_name, leftColumn.getRowCount.toInt)
+              columns += colon.incRefCount()
+            }
+
             val nonFirstColumn = doCast(nonFirstColumnView,
               inputSchema(nonFirstIndex).dataType, StringType, options)
             if (useLegacyComplexTypesToString) {
               // " " if non-null
               columns += spaceColumn.mergeAndSetValidity(BinaryOp.BITWISE_AND, nonFirstColumnView)
             }
+            val needsQuoting = jsonStructFormat &&
+                inputSchema(nonFirstIndex).dataType == DataTypes.StringType
+            if (needsQuoting) {
+              columns += quote.incRefCount()
+            }
             columns += nonFirstColumn
+            if (needsQuoting) {
+              columns += quote.incRefCount()
+            }
           }
         }
 

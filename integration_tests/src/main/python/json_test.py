@@ -527,3 +527,24 @@ def test_read_case_col_name(spark_tmp_path, v1_enabled_list, col_name):
     assert_gpu_and_cpu_are_equal_collect(
             lambda spark : spark.read.schema(gen.data_type).json(data_path).selectExpr(col_name),
             conf=all_confs)
+
+def test_structs_to_json(spark_tmp_path):
+
+    def create_test_data(spark):
+        data = [("John", "Doe", 21), ("Jane", "Doe", 25), ("Sam", "Smith", 30)]
+        spark.createDataFrame(data, ["first_name", "last_name", "age"])
+        df = spark.createDataFrame(data, ["first_name", "last_name", "age"])
+        df = df.withColumn("person", f.struct("first_name", "last_name", "age"))
+        df.write.mode("Overwrite").parquet("/tmp/struct.parquet")
+
+    def struct_to_json(spark):
+        df = spark.read.parquet("/tmp/struct.parquet")
+        df = df.withColumn("person_json", f.to_json("person"))
+        return df
+
+    with_cpu_session(lambda spark : create_test_data(spark))
+
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark : struct_to_json(spark),
+        conf = { 'spark.rapids.sql.explain': 'ALL' }
+    )
