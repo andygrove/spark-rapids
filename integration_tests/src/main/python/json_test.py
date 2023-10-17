@@ -528,23 +528,20 @@ def test_read_case_col_name(spark_tmp_path, v1_enabled_list, col_name):
             lambda spark : spark.read.schema(gen.data_type).json(data_path).selectExpr(col_name),
             conf=all_confs)
 
+
+# @pytest.mark.parametrize('data_gen', json_supported_gens, ids=idfn)
 def test_structs_to_json(spark_tmp_path):
+    # TODO test for these types:  struct, array of structs or a map or array of map.
+    # TODO test with nullable=True
+    json_string_gen = StringGen("[A-Z]{1}[a-z]{2,5}", nullable=False)
 
-    def create_test_data(spark):
-        data = [("John", "Doe", 21), ("Jane", "Doe", 25), ("Sam", "Smith", 30)]
-        spark.createDataFrame(data, ["first_name", "last_name", "age"])
-        df = spark.createDataFrame(data, ["first_name", "last_name", "age"])
-        df = df.withColumn("person", f.struct("first_name", "last_name", "age"))
-        df.write.mode("Overwrite").parquet("/tmp/struct.parquet")
+    gen = StructGen([('my_struct',
+        StructGen([('a', IntegerGen(nullable=False)), ("b", json_string_gen)], nullable=False))], nullable=False)
 
-    def struct_to_json(spark):
-        df = spark.read.parquet("/tmp/struct.parquet")
-        df = df.withColumn("person_json", f.to_json("person"))
-        return df
-
-    with_cpu_session(lambda spark : create_test_data(spark))
+    def foo(spark):
+        df = gen_df(spark, gen)
+        return df.withColumn("my_json", f.to_json("my_struct")).drop("my_struct")
 
     assert_gpu_and_cpu_are_equal_collect(
-        lambda spark : struct_to_json(spark),
-        conf = { 'spark.rapids.sql.explain': 'ALL' }
-    )
+        lambda spark : foo(spark),
+        conf=_enable_all_types_conf)
