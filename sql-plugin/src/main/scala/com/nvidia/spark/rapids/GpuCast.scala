@@ -994,48 +994,40 @@ object GpuCast {
         //   3.1+: {firstCol
         columns += leftColumn.incRefCount()
 
-        if (jsonStructFormat) {
-          withResource(Scalar.fromString("\"" + inputSchema(0).name + "\"")) { _name =>
-            columns += ColumnVector.fromScalar(_name, leftColumn.getRowCount.toInt)
-            columns += colon.incRefCount()
-          }
-        }
+        for (i <- 0 until numInputColumns) {
+          withResource(input.getChildColumnView(i)) { cv =>
 
-        withResource(input.getChildColumnView(0)) { firstColumnView =>
-          val needsQuoting = jsonStructFormat && inputSchema(0).dataType == DataTypes.StringType
-          if (needsQuoting) {
-            columns += quote.incRefCount()
-          }
-          columns += castToString(firstColumnView, inputSchema.head.dataType, options)
-          if (needsQuoting) {
-            columns += quote.incRefCount()
-          }
-        }
-
-        for (nonFirstIndex <- 1 until numInputColumns) {
-          withResource(input.getChildColumnView(nonFirstIndex)) { nonFirstColumnView =>
-            // legacy: ","
-            //   3.1+: ", "
-            columns += sepColumn.incRefCount()
-
-            withResource(Scalar.fromString(
-              "\"" + inputSchema(nonFirstIndex).name + "\"")) { _name =>
-              columns += ColumnVector.fromScalar(_name, leftColumn.getRowCount.toInt)
-              columns += colon.incRefCount()
+            if (i>0) {
+              // legacy: ","
+              //   3.1+: ", "
+              columns += sepColumn.incRefCount()
             }
 
-            val nonFirstColumn = doCast(nonFirstColumnView,
-              inputSchema(nonFirstIndex).dataType, StringType, options)
-            if (useLegacyComplexTypesToString) {
-              // " " if non-null
-              columns += spaceColumn.mergeAndSetValidity(BinaryOp.BITWISE_AND, nonFirstColumnView)
+            if (jsonStructFormat) {
+              // prefix with quoted column name followed by colon
+              withResource(Scalar.fromString("\"" + inputSchema(i).name + "\"")) { _name =>
+                columns += ColumnVector.fromScalar(_name, leftColumn.getRowCount.toInt)
+                columns += colon.incRefCount()
+              }
             }
+
+            val cv2 = if (i==0) {
+              castToString(cv, inputSchema.head.dataType, options)
+            } else {
+              val nonFirstColumn = doCast(cv, inputSchema(i).dataType, StringType, options)
+              if (useLegacyComplexTypesToString) {
+                // " " if non-null
+                columns += spaceColumn.mergeAndSetValidity(BinaryOp.BITWISE_AND, nonFirstColumn)
+              }
+              nonFirstColumn
+            }
+
             val needsQuoting = jsonStructFormat &&
-                inputSchema(nonFirstIndex).dataType == DataTypes.StringType
+              inputSchema(i).dataType == DataTypes.StringType
             if (needsQuoting) {
               columns += quote.incRefCount()
             }
-            columns += nonFirstColumn
+            columns += cv2
             if (needsQuoting) {
               columns += quote.incRefCount()
             }
