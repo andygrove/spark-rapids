@@ -539,10 +539,10 @@ def test_structs_to_json(spark_tmp_path):
     gen = StructGen([('my_struct',
         StructGen([
             ('a', IntegerGen(nullable=True)),
-            ("b", json_string_gen)], nullable=False)),
-            ("c", FloatGen(nullable=False)),
-            ("d", StructGen([(('int', IntegerGen(nullable=False)))], nullable=False)),
-            ("e", ArrayGen(StructGen([(('child', IntegerGen(nullable=False)))], nullable=False))),
+            ("b", json_string_gen)], nullable=True)),
+            ("c", FloatGen(nullable=True)),
+            ("d", StructGen([(('int', IntegerGen(nullable=True)))], nullable=True)),
+            ("e", ArrayGen(StructGen([(('child', IntegerGen(nullable=True)))], nullable=True))),
         ], nullable=False)
 
     def struct_to_json(spark):
