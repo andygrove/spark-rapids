@@ -526,7 +526,7 @@ def test_from_json_struct_date():
               'spark.sql.legacy.timeParserPolicy': 'EXCEPTION'})
 
 def test_from_json_struct_timestamp():
-    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01T12:34:56" }')
+    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01T12:34:56(\.[0-9]{1,6})?Z?" }')
     assert_gpu_and_cpu_are_equal_collect(
         lambda spark : unary_op_df(spark, json_string_gen) \
             .select(f.from_json('a', 'struct<a:timestamp>')),
