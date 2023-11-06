@@ -517,6 +517,22 @@ def test_from_json_struct_decimal():
             .select(f.from_json('a', 'struct<a:decimal>')),
         conf={"spark.rapids.sql.expression.JsonToStructs": True})
 
+def test_from_json_struct_date():
+    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01" }')
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark : unary_op_df(spark, json_string_gen) \
+            .select(f.from_json('a', 'struct<a:date>')),
+        conf={"spark.rapids.sql.expression.JsonToStructs": True,
+              'spark.sql.legacy.timeParserPolicy': 'EXCEPTION'})
+
+def test_from_json_struct_timestamp():
+    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01T12:34:56" }')
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark : unary_op_df(spark, json_string_gen) \
+            .select(f.from_json('a', 'struct<a:timestamp>')),
+        conf={"spark.rapids.sql.expression.JsonToStructs": True,
+              'spark.sql.legacy.timeParserPolicy': 'EXCEPTION'})
+
 @pytest.mark.parametrize('schema', ['struct<teacher:string>',
                                     'struct<student:struct<name:string,age:int>>',
                                     'struct<teacher:string,student:struct<name:string,age:int>>'])
