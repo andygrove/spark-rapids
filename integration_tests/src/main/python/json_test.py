@@ -517,17 +517,17 @@ def test_from_json_struct_decimal():
             .select(f.from_json('a', 'struct<a:decimal>')),
         conf={"spark.rapids.sql.expression.JsonToStructs": True})
 
-@pytest.mark.parametrize('date_pattern', [
-    # "[1-8]{1}[0-9]{3}-[0-9]{2}-[0-9]{2}",
+@pytest.mark.parametrize('date_gen', [
+    "[1-8]{1}[0-9]{3}-[0-9]{2}-[0-9]{2}",
     "[0-9]{2}/[0-9]{2}/[1-8]{1}[0-9]{3}",
+    "[0-9-]{1,10}"
 ])
 @pytest.mark.parametrize('date_format', [
-    # "yyyy-MM-dd",
-    "dd/MM/yyyy",
+    "yyyy-MM-dd",
+    pytest.param("dd/MM/yyyy", marks=pytest.mark.skipif(is_before_spark_340(), reason="dateFormat not respected until Spark 3.4")),
 ])
-
-def test_from_json_struct_date(date_pattern, date_format):
-    json_string_gen = StringGen(r'{ "a": "' + date_pattern + '" }')
+def test_from_json_struct_date(date_gen, date_format):
+    json_string_gen = StringGen(r'{ "a": "' + date_gen + '" }')
     options = {
         'dateFormat': date_format
     }
@@ -553,6 +553,7 @@ def test_from_json_struct_date(date_pattern, date_format):
     "yyyy-MM-dd'T'HH:mm:ss[.SSS]",
     "dd/MM/yyyy'T'HH:mm:ss[.SSS]",
 ])
+# TODO spark.sql.timestampType
 def test_from_json_struct_timestamp(time_zone, timestamp_pattern, timestamp_format):
     json_string_gen = StringGen(r'{ "a": "' + timestamp_pattern + '" }')
     options = {

@@ -206,7 +206,6 @@ case class GpuJsonToStructs(
             val columns = fieldNames.safeMap { case (name, dtype) =>
               val i = names.indexOf(name)
               if (i == -1) {
-                println(s"NAME NOT FOUND: $name")
                 GpuColumnVector.columnVectorFromNull(numRows, dtype)
               } else {
                 val col = rawTable.getColumn(i)
