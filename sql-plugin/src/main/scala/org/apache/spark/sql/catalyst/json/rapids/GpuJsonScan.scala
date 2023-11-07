@@ -100,6 +100,7 @@ object GpuJsonScan {
       if (enc != StandardCharsets.UTF_8.name() && enc != StandardCharsets.US_ASCII.name()) {
       meta.willNotWorkOnGpu("GpuJsonScan only supports UTF8 or US-ASCII encoded data")
     })
+
   }
 
   def tagJsonToStructsSupport(options:Map[String, String],
@@ -108,6 +109,9 @@ object GpuJsonScan {
       options,
       SQLConf.get.sessionLocalTimeZone,
       SQLConf.get.columnNameOfCorruptRecord)
+
+    // TODO check for supported timeZone, dateFormat, timestampFormat, timestampNTZFormat (and
+    // this may need to be shimmed)
 
     tagSupportOptions(parsedOptions, meta)
   }

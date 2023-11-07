@@ -17,7 +17,7 @@
 package org.apache.spark.sql.rapids
 
 import ai.rapids.cudf
-import ai.rapids.cudf.{ColumnVector, ColumnView, DType, Scalar, TableDebug}
+import ai.rapids.cudf.{ColumnVector, ColumnView, DType, RegexProgram, Scalar, TableDebug}
 import com.nvidia.spark.rapids.{GpuColumnVector, GpuScalar, GpuUnaryExpression}
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.GpuCast.doCast
@@ -238,21 +238,30 @@ case class GpuJsonToStructs(
 
   private def castJsonStringToDate(input: ColumnVector): ColumnVector = {
 
-    def parseDate(cudfFormat: String) = {
-      withResource(input.isTimestamp(cudfFormat)) { isTimestamp =>
+    def parseDate(cudfFormat: String, regex: String) = {
+      val x = withResource(input.isTimestamp(cudfFormat)) { isTimestamp =>
         withResource(input.asTimestampDays(cudfFormat)) { ts =>
           withResource(Scalar.fromNull(DType.TIMESTAMP_DAYS)) { nullScalar =>
             isTimestamp.ifElse(ts, nullScalar)
           }
         }
       }
+      withResource(x) { _ =>
+        withResource(input.matchesRe(new RegexProgram(regex))) { matches =>
+          withResource(Scalar.fromNull(DType.TIMESTAMP_DAYS)) { nullScalar =>
+            matches.ifElse(x, nullScalar)
+          }
+        }
+      }
     }
 
+    // TODO: is any of this duplicated with existing code in GpuCast or elsewhere?
+    // TODO what about years that are not 4 digits
     options.getOrElse("dateFormat", "yyyy-MM-dd") match {
-      case "yyyy-MM-dd" => parseDate("%Y-%m-%d")
-      case "dd/MM/yyyy" => parseDate("%d/%m/%Y")
+      case "yyyy-MM-dd" => parseDate("%Y-%m-%d", "^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+      case "dd/MM/yyyy" => parseDate("%d/%m/%Y", "^[0-9]{2}/[0-9]{2}/[0-9]{4}$")
       case _ =>
-        throw new IllegalStateException("Unsupported dataFormat")
+        throw new IllegalStateException("Unsupported dateFormat")
     }
   }
 
