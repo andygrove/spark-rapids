@@ -17,14 +17,13 @@
 package org.apache.spark.sql.rapids
 
 import ai.rapids.cudf
-import ai.rapids.cudf.{ColumnVector, ColumnView, Scalar, TableDebug}
+import ai.rapids.cudf.{ColumnVector, ColumnView, DType, Scalar, TableDebug}
 import com.nvidia.spark.rapids.{GpuColumnVector, GpuScalar, GpuUnaryExpression}
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.GpuCast.doCast
 import com.nvidia.spark.rapids.RapidsPluginImplicits.AutoCloseableProducingSeq
 import com.nvidia.spark.rapids.jni.MapUtils
 import org.apache.commons.text.StringEscapeUtils
-
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, NullIntolerant, TimeZoneAwareExpression}
 import org.apache.spark.sql.types._
 
@@ -239,11 +238,20 @@ case class GpuJsonToStructs(
   }
 
   private def castJsonStringToDate(input: ColumnVector): ColumnVector = {
+
+    def parseDate(cudfFormat: String) = {
+      withResource(input.isTimestamp(cudfFormat)) { isTimestamp =>
+        withResource(input.asTimestampDays(cudfFormat)) { ts =>
+          withResource(Scalar.fromNull(DType.TIMESTAMP_DAYS)) { nullScalar =>
+            isTimestamp.ifElse(ts, nullScalar)
+          }
+        }
+      }
+    }
+
     options.getOrElse("dateFormat", "yyyy-MM-dd") match {
-      case "yyyy-MM-dd" =>
-        input.asTimestampDays("%Y-%m-%d")
-      case "dd/MM/yyyy" =>
-        input.asTimestampDays("%d/%m/%Y")
+      case "yyyy-MM-dd" => parseDate("%Y-%m-%d")
+      case "dd/MM/yyyy" => parseDate("%d/%m/%Y")
       case _ =>
         throw new IllegalStateException("Unsupported dataFormat")
     }
