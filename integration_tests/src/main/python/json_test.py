@@ -517,21 +517,54 @@ def test_from_json_struct_decimal():
             .select(f.from_json('a', 'struct<a:decimal>')),
         conf={"spark.rapids.sql.expression.JsonToStructs": True})
 
-def test_from_json_struct_date():
-    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01" }')
-    assert_gpu_and_cpu_are_equal_collect(
-        lambda spark : unary_op_df(spark, json_string_gen) \
-            .select(f.from_json('a', 'struct<a:date>')),
-        conf={"spark.rapids.sql.expression.JsonToStructs": True,
-              'spark.sql.legacy.timeParserPolicy': 'EXCEPTION'})
+@pytest.mark.parametrize('date_pattern', [
+    # "[1-8]{1}[0-9]{3}-[0-9]{2}-[0-9]{2}",
+    "[0-9]{2}/[0-9]{2}/[1-8]{1}[0-9]{3}",
+])
+@pytest.mark.parametrize('date_format', [
+    # "yyyy-MM-dd",
+    "dd/MM/yyyy",
+])
 
-def test_from_json_struct_timestamp():
-    json_string_gen = StringGen(r'{ "a": "[1-8]{1}[0-9]{3}-01-01T12:34:56(\.[0-9]{1,6})?Z?" }')
+def test_from_json_struct_date(date_pattern, date_format):
+    json_string_gen = StringGen(r'{ "a": "' + date_pattern + '" }')
+    options = {
+        'dateFormat': date_format
+    }
     assert_gpu_and_cpu_are_equal_collect(
         lambda spark : unary_op_df(spark, json_string_gen) \
-            .select(f.from_json('a', 'struct<a:timestamp>')),
+            .select(f.col('a'), f.from_json('a', 'struct<a:date>', options)),
         conf={"spark.rapids.sql.expression.JsonToStructs": True,
-              'spark.sql.legacy.timeParserPolicy': 'EXCEPTION'})
+              'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
+
+
+@pytest.mark.parametrize('time_zone', [
+    'Z',
+    'UTC',
+    'Etc/UTC',
+    '+00:00',
+    pytest.param('America/Denver', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/6846')),
+])
+@pytest.mark.parametrize('timestamp_pattern', [
+    "[1-8]{1}[0-9]{3}-[0-9]{2}-[0-9]{2}(T12:34:56(\.[0-9]{1,6})?Z?)?",
+    "[0-9]{2}/[0-9]{2}/[1-8]{1}[0-9]{3}(T12:34:56(\.[0-9]{1,6})?Z?)?",
+])
+@pytest.mark.parametrize('timestamp_format', [
+    "yyyy-MM-dd'T'HH:mm:ss[.SSS]",
+    "dd/MM/yyyy'T'HH:mm:ss[.SSS]",
+])
+def test_from_json_struct_timestamp(time_zone, timestamp_pattern, timestamp_format):
+    json_string_gen = StringGen(r'{ "a": "' + timestamp_pattern + '" }')
+    options = {
+        'timeZone': time_zone,
+        'timestampFormat': timestamp_format + '[XXX]',
+        'timestampNTZFormat': timestamp_format,
+    }
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark : unary_op_df(spark, json_string_gen) \
+            .select(f.col('a'), f.from_json('a', 'struct<a:timestamp>', options)),
+        conf={"spark.rapids.sql.expression.JsonToStructs": True,
+              'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
 @pytest.mark.parametrize('schema', ['struct<teacher:string>',
                                     'struct<student:struct<name:string,age:int>>',

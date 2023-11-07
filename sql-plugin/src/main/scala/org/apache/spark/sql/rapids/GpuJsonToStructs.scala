@@ -24,6 +24,7 @@ import com.nvidia.spark.rapids.GpuCast.doCast
 import com.nvidia.spark.rapids.RapidsPluginImplicits.AutoCloseableProducingSeq
 import com.nvidia.spark.rapids.jni.MapUtils
 import org.apache.commons.text.StringEscapeUtils
+
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, NullIntolerant, TimeZoneAwareExpression}
 import org.apache.spark.sql.types._
 
@@ -156,6 +157,9 @@ case class GpuJsonToStructs(
   }
 
   override protected def doColumnar(input: GpuColumnVector): cudf.ColumnVector = {
+
+    TableDebug.get().debug("input", input.getBase)
+
     schema match {
       case _: MapType =>
         MapUtils.extractRawMapFromJsonString(input.getBase)
@@ -207,8 +211,13 @@ case class GpuJsonToStructs(
                 GpuColumnVector.columnVectorFromNull(numRows, dtype)
               } else {
                 val col = rawTable.getColumn(i)
-                // getSparkType is only used to get the from type for cast
-                doCast(col, getSparkType(col), dtype)
+                // getSparkType is only used to get the "from type" for cast
+                val sparkType = getSparkType(col)
+                (sparkType, dtype) match {
+                  case (DataTypes.StringType, DataTypes.DateType) =>
+                    castJsonStringToDate(col)
+                  case _ => doCast(col, sparkType, dtype)
+                }
               }
             }
 
@@ -226,6 +235,17 @@ case class GpuJsonToStructs(
       }
       case _ => throw new IllegalArgumentException(
         s"GpuJsonToStructs currently does not support schema of type $schema.")
+    }
+  }
+
+  private def castJsonStringToDate(input: ColumnVector): ColumnVector = {
+    options.getOrElse("dateFormat", "yyyy-MM-dd") match {
+      case "yyyy-MM-dd" =>
+        input.asTimestampDays("%Y-%m-%d")
+      case "dd/MM/yyyy" =>
+        input.asTimestampDays("%d/%m/%Y")
+      case _ =>
+        throw new IllegalStateException("Unsupported dataFormat")
     }
   }
 
