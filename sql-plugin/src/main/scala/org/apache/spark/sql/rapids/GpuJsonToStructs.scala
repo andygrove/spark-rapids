@@ -215,6 +215,10 @@ case class GpuJsonToStructs(
                     GpuJsonToStructsShim.castJsonStringToDate(col, options)
                   case (_, DataTypes.DateType) =>
                     castToNullDate(input.getBase)
+                  case (DataTypes.StringType, DataTypes.TimestampType) =>
+                    GpuJsonToStructsShim.castJsonStringToTimestamp(col, options)
+                  case (_, DataTypes.TimestampType) =>
+                    castToNullDate(input.getBase)
                   case _ => doCast(col, sparkType, dtype)
                 }
 

@@ -24,6 +24,8 @@ package com.nvidia.spark.rapids.shims
 import ai.rapids.cudf.ColumnVector
 import com.nvidia.spark.rapids.GpuCast
 
+import org.apache.spark.sql.internal.SQLConf
+
 object GpuJsonToStructsShim {
 
   def castJsonStringToDate(input: ColumnVector, options: Map[String, String]): ColumnVector = {
@@ -39,4 +41,19 @@ object GpuJsonToStructsShim {
     }
   }
 
+  def castJsonStringToTimestamp(input: ColumnVector, options: Map[String, String]): ColumnVector = {
+    options.get("timestampFormat") match {
+      case None =>
+        // legacy behavior
+        GpuCast.castStringToTimestamp(input, ansiMode = SQLConf.get.ansiEnabled)
+      case Some("yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX]") =>
+        GpuCast.convertTimestampOrNull(input, "[0-9]{4}-[0-9]{2}-[0-9]{2}T" +
+          "[0-9]{2}:[0-9]{2}:[0-9]{2}" +
+          "(\\.[0-9]{3})?" +
+          "Z?", "%Y-%m-%dT%H:%M:%S.%f")
+      case other =>
+        // should be unreachable due to GpuOverrides checks
+        throw new IllegalStateException(s"Unsupported timestampFormat $other")
+    }
+  }
 }
