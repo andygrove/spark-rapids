@@ -1453,7 +1453,7 @@ object GpuCast {
     }
   }
 
-  private def castStringToTimestamp(input: ColumnVector, ansiMode: Boolean): ColumnVector = {
+  def castStringToTimestamp(input: ColumnVector, ansiMode: Boolean): ColumnVector = {
 
     // special timestamps
     val today = DateUtils.currentDate()

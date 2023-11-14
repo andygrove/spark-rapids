@@ -215,6 +215,10 @@ case class GpuJsonToStructs(
                     GpuJsonToStructsShim.castJsonStringToDate(col, options)
                   case (_, DataTypes.DateType) =>
                     castToNullDate(input.getBase)
+                  case (DataTypes.StringType, DataTypes.TimestampType) =>
+                    GpuJsonToStructsShim.castJsonStringToTimestamp(col, options)
+                  case (_, DataTypes.TimestampType) =>
+                    castToNullTimestamp(input.getBase)
                   case _ => doCast(col, sparkType, dtype)
                 }
 
@@ -263,6 +267,12 @@ case class GpuJsonToStructs(
 
   private def castToNullDate(input: ColumnVector): ColumnVector = {
     withResource(Scalar.fromNull(DType.TIMESTAMP_DAYS)) { nullScalar =>
+      ColumnVector.fromScalar(nullScalar, input.getRowCount.toInt)
+    }
+  }
+
+  private def castToNullTimestamp(input: ColumnVector): ColumnVector = {
+    withResource(Scalar.fromNull(DType.TIMESTAMP_MICROSECONDS)) { nullScalar =>
       ColumnVector.fromScalar(nullScalar, input.getRowCount.toInt)
     }
   }

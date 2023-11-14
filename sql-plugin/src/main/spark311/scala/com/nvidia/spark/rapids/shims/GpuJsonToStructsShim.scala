@@ -54,4 +54,14 @@ object GpuJsonToStructsShim {
     }
   }
 
+  def castJsonStringToTimestamp(input: ColumnVector,
+      options: Map[String, String]): ColumnVector = {
+    withResource(Scalar.fromString(" ")) { space =>
+      withResource(input.strip(space)) { trimmed =>
+        // TODO test with and without ansi mode .. same for dates
+        GpuCast.castStringToTimestamp(trimmed, ansiMode = false)
+      }
+    }
+  }
+
 }

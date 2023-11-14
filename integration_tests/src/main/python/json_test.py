@@ -559,6 +559,43 @@ def test_from_json_struct_date(date_gen, date_format):
         conf={"spark.rapids.sql.expression.JsonToStructs": True,
               'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
+
+@pytest.mark.parametrize('timestamp_gen', [
+    # "yyyy-MM-dd"
+    "\"[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-8]{1}[0-9]{3}-[0-3]{1,2}-[0-3]{1,2}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?\"",
+    # # "yyyy-MM"
+    # "\"[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-8]{1}[0-9]{3}-[0-3]{1,2}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?\"",
+    # # "yyyy"
+    # "\"[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[0-9]{4}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?\"",
+    # # "dd/MM/yyyy"
+    # "\"[0-9]{2}/[0-9]{2}/[1-8]{1}[0-9]{3}\"",
+    # # special constant values
+    # "\"(now|today|tomorrow|epoch)\"",
+    # # "nnnnn" (number of days since epoch prior to Spark 3.4, throws exception from 3.4)
+    # pytest.param("\"[0-9]{5}\"", marks=pytest.mark.skip(reason="https://github.com/NVIDIA/spark-rapids/issues/9664")),
+    # # integral
+    # pytest.param("[0-9]{1,5}", marks=pytest.mark.skip(reason="TBD")),
+    # # floating-point
+    # "[0-9]{0,2}\.[0-9]{1,2}"
+    # # boolean
+    # "(true|false)"
+])
+@pytest.mark.parametrize('timestamp_format', [
+"",
+# "yyyy-MM-dd",
+# pytest.param("dd/MM/yyyy", marks=pytest.mark.xfail(reason="https://github.com/NVIDIA/spark-rapids/issues/9667")),
+])
+def test_from_json_struct_timestamp(timestamp_gen, timestamp_format):
+    json_string_gen = StringGen(r'{ "a": ' + timestamp_gen + ' }') \
+        .with_special_case('{ "a": null }') \
+        .with_special_case('null')
+    options = { 'timestampFormat': timestamp_format } if len(timestamp_format) > 0 else { }
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark : unary_op_df(spark, json_string_gen) \
+            .select(f.col('a'), f.from_json('a', 'struct<a:timestamp>', options)),
+        conf={"spark.rapids.sql.expression.JsonToStructs": True,
+              'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
+
 @pytest.mark.parametrize('schema', ['struct<teacher:string>',
                                     'struct<student:struct<name:string,age:int>>',
                                     'struct<teacher:string,student:struct<name:string,age:int>>'])
