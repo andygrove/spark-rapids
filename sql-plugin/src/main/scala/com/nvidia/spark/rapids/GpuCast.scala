@@ -1369,7 +1369,7 @@ object GpuCast {
   }
 
   /** This method does not close the `input` ColumnVector. */
-  private def convertTimestampOrNull(
+  def convertTimestampOrNull(
       input: ColumnVector,
       regex: String,
       cudfFormat: String): ColumnVector = {
