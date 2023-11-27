@@ -162,34 +162,39 @@ object GpuJsonScan {
 
     tagSupportOptions(parsedOptions, meta)
 
-    val types = readSchema.map(_.dataType)
-    if (types.contains(DateType)) {
+    val hasDates = TrampolineUtil.dataTypeExistsRecursively(readSchema, _.isInstanceOf[DateType])
+    if (hasDates) {
       GpuTextBasedDateUtils.tagCudfFormat(meta,
         GpuJsonUtils.dateFormatInRead(parsedOptions), parseString = true)
     }
 
-    if (types.contains(TimestampType)) {
+    val hasTimestamps = TrampolineUtil.dataTypeExistsRecursively(readSchema,
+      _.isInstanceOf[TimestampType])
+    if (hasTimestamps) {
       meta.checkTimeZoneId(parsedOptions.zoneId)
       GpuTextBasedDateUtils.tagCudfFormat(meta,
         GpuJsonUtils.timestampFormatInRead(parsedOptions), parseString = true)
     }
 
     if(GpuJsonUtils.enableDateTimeParsingFallback(parsedOptions) &&
-        (types.contains(DateType) || types.contains(TimestampType))) {
+        (hasDates || hasTimestamps)) {
       meta.willNotWorkOnGpu(s"GpuJsonScan does not support enableDateTimeParsingFallback")
     }
 
-    if (!meta.conf.isJsonFloatReadEnabled && types.contains(FloatType)) {
+    if (!meta.conf.isJsonFloatReadEnabled &&
+        TrampolineUtil.dataTypeExistsRecursively(readSchema, _.isInstanceOf[FloatType])) {
       meta.willNotWorkOnGpu("JSON reading is not 100% compatible when reading floats. " +
         s"To enable it please set ${RapidsConf.ENABLE_READ_JSON_FLOATS} to true.")
     }
 
-    if (!meta.conf.isJsonDoubleReadEnabled && types.contains(DoubleType)) {
+    if (!meta.conf.isJsonDoubleReadEnabled &&
+        TrampolineUtil.dataTypeExistsRecursively(readSchema, _.isInstanceOf[DoubleType])) {
       meta.willNotWorkOnGpu("JSON reading is not 100% compatible when reading doubles. " +
         s"To enable it please set ${RapidsConf.ENABLE_READ_JSON_DOUBLES} to true.")
     }
 
-    if (!meta.conf.isJsonDecimalReadEnabled && types.exists(_.isInstanceOf[DecimalType])) {
+    if (!meta.conf.isJsonDecimalReadEnabled &&
+        TrampolineUtil.dataTypeExistsRecursively(readSchema, _.isInstanceOf[DecimalType])) {
       meta.willNotWorkOnGpu("JSON reading is not 100% compatible when reading decimals. " +
         s"To enable it please set ${RapidsConf.ENABLE_READ_JSON_DECIMALS} to true.")
     }
