@@ -355,6 +355,22 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
     else:
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
+@pytest.mark.parametrize('data_gen', [StringGen('[0-9-/]{1,10}', nullable=False)])
+@pytest.mark.parametrize('schema', [_date_schema])
+@pytest.mark.parametrize('ansi_enabled', [True, False])
+def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data_gen, schema, ansi_enabled):
+    path = spark_tmp_path + '/JSON_DATA'
+    with_cpu_session(lambda spark : gen_df(spark, data_gen).write.json(path))
+
+    updated_conf = copy_and_update(_enable_all_types_conf,
+        {'spark.sql.ansi.enabled': ansi_enabled,
+        'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
+
+    f = read_json_df(path, schema, spark_tmp_table_factory, updated_conf)
+
+    assert_gpu_and_cpu_are_equal_collect(f, conf = updated_conf)
+
+
 @approximate_float
 @pytest.mark.parametrize('filename', [
     'dates_invalid.json',
