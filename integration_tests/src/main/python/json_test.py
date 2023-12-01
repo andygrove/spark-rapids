@@ -355,18 +355,31 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
     else:
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
-@pytest.mark.parametrize('data_gen', [StringGen('[0-9-/]{1,10}', nullable=False)])
-@pytest.mark.parametrize('schema', [_date_schema])
+@pytest.mark.parametrize('data_gen', [
+    StringGen('[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}', nullable=False),
+    StringGen('[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}', nullable=False),
+    StringGen('[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}', nullable=False),
+])
+@pytest.mark.parametrize('schema', [StructType([StructField('value', DateType())])])
+@pytest.mark.parametrize('date_format', ['yyyy-MM-dd', 'dd/MM/yyyy'])
 @pytest.mark.parametrize('ansi_enabled', [True, False])
-def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data_gen, schema, ansi_enabled):
+def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data_gen, schema, date_format, ansi_enabled):
     path = spark_tmp_path + '/JSON_DATA'
-    with_cpu_session(lambda spark : gen_df(spark, data_gen).write.json(path))
+
+    def create_test_data(spark):
+        df = gen_df(spark, data_gen)
+        df.show()
+        df.write.json(path)
+        # print(path)
+        # time.sleep(60000)
+
+    with_cpu_session(create_test_data)
 
     updated_conf = copy_and_update(_enable_all_types_conf,
         {'spark.sql.ansi.enabled': ansi_enabled,
         'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
-    f = read_json_df(path, schema, spark_tmp_table_factory, updated_conf)
+    f = read_json_df(path, schema, spark_tmp_table_factory, { 'dateFormat': date_format })
 
     assert_gpu_and_cpu_are_equal_collect(f, conf = updated_conf)
 
