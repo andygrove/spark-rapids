@@ -379,9 +379,19 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
   }
 
   def castStringToDate(input: ColumnVector, dt: DType, failOnInvalid: Boolean): ColumnVector = {
-    GpuCast.convertDateOrNull(input, "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "%Y-%m-%d")
-//    val cudfFormat = DateUtils.toStrf(dateFormat, parseString = true)
-//    withResource(input.strip()) { stripped =>
+    val cudfFormat = DateUtils.toStrf(dateFormat, parseString = true)
+
+    val twoDigits = raw"\d{2}"
+    val fourDigits = raw"\d{4}"
+
+    val regexRoot = dateFormat
+      .replace("yyyy", fourDigits)
+      .replace("MM", twoDigits)
+      .replace("dd", twoDigits)
+
+    GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat)
+
+    //    withResource(input.strip()) { stripped =>
 //      withResource(stripped.isTimestamp(cudfFormat)) { isDate =>
 //        if (failOnInvalid && GpuOverrides.getTimeParserPolicy == ExceptionTimeParserPolicy) {
 //          withResource(isDate.all()) { all =>
