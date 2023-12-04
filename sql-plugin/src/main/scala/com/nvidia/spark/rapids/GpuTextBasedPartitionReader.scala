@@ -391,7 +391,6 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
 
     GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat)
 
-    //    withResource(input.strip()) { stripped =>
 //      withResource(stripped.isTimestamp(cudfFormat)) { isDate =>
 //        if (failOnInvalid && GpuOverrides.getTimeParserPolicy == ExceptionTimeParserPolicy) {
 //          withResource(isDate.all()) { all =>
