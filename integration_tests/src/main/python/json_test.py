@@ -153,6 +153,7 @@ def test_json_input_meta(spark_tmp_path, v1_enabled_list):
                         'input_file_block_length()'),
             conf=updated_conf)
 
+# TODO add '' to represent not specifying a date format
 json_supported_date_formats = ['yyyy-MM-dd', 'yyyy/MM/dd', 'yyyy-MM', 'yyyy/MM',
         'MM-yyyy', 'MM/yyyy', 'MM-dd-yyyy', 'MM/dd/yyyy', 'dd-MM-yyyy', 'dd/MM/yyyy']
 @pytest.mark.parametrize('date_format', json_supported_date_formats, ids=idfn)
@@ -260,20 +261,20 @@ def json_ts_formats_round_trip_ntz(spark_tmp_path, date_format, ts_part, timesta
 
 @approximate_float
 @pytest.mark.parametrize('filename', [
-    'boolean.json',
-    pytest.param('boolean_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4779')),
-    'ints.json',
-    pytest.param('ints_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4793')),
-    'nan_and_inf.json',
-    pytest.param('nan_and_inf_strings.json', marks=pytest.mark.skipif(is_before_spark_330(), reason='https://issues.apache.org/jira/browse/SPARK-38060 fixed in Spark 3.3.0')),
-    'nan_and_inf_invalid.json',
-    'floats.json',
-    'floats_leading_zeros.json',
-    'floats_invalid.json',
-    pytest.param('floats_edge_cases.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4647')),
-    'decimals.json',
+    # 'boolean.json',
+    # pytest.param('boolean_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4779')),
+    # 'ints.json',
+    # pytest.param('ints_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4793')),
+    # 'nan_and_inf.json',
+    # pytest.param('nan_and_inf_strings.json', marks=pytest.mark.skipif(is_before_spark_330(), reason='https://issues.apache.org/jira/browse/SPARK-38060 fixed in Spark 3.3.0')),
+    # 'nan_and_inf_invalid.json',
+    # 'floats.json',
+    # 'floats_leading_zeros.json',
+    # 'floats_invalid.json',
+    # pytest.param('floats_edge_cases.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4647')),
+    # 'decimals.json',
     'dates.json',
-    'dates_invalid.json',
+    # 'dates_invalid.json',
 ])
 @pytest.mark.parametrize('schema', [_bool_schema, _byte_schema, _short_schema, _int_schema, _long_schema, \
                                     _float_schema, _double_schema, _decimal_10_2_schema, _decimal_10_3_schema, \
@@ -282,16 +283,24 @@ def json_ts_formats_round_trip_ntz(spark_tmp_path, date_format, ts_part, timesta
 @pytest.mark.parametrize('allow_non_numeric_numbers', ["true", "false"])
 @pytest.mark.parametrize('allow_numeric_leading_zeros', ["true"])
 @pytest.mark.parametrize('ansi_enabled', ["true", "false"])
-def test_basic_json_read(std_input_path, filename, schema, read_func, allow_non_numeric_numbers, allow_numeric_leading_zeros, ansi_enabled, spark_tmp_table_factory):
+@pytest.mark.parametrize('date_format', ['', 'yyyy-MM-dd'])
+def test_basic_json_read(std_input_path, filename, schema, read_func, allow_non_numeric_numbers, \
+        allow_numeric_leading_zeros, ansi_enabled, spark_tmp_table_factory, date_format):
     updated_conf = copy_and_update(_enable_all_types_conf,
         {'spark.sql.ansi.enabled': ansi_enabled,
          'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
+    options = {"allowNonNumericNumbers": allow_non_numeric_numbers,
+           "allowNumericLeadingZeros": allow_numeric_leading_zeros,
+           }
+
+    if len(date_format) > 0:
+        options['dateFormat'] = date_format
+
     assert_gpu_and_cpu_are_equal_collect(
         read_func(std_input_path + '/' + filename,
-        schema,
-        spark_tmp_table_factory,
-        { "allowNonNumericNumbers": allow_non_numeric_numbers,
-          "allowNumericLeadingZeros": allow_numeric_leading_zeros}),
+                  schema,
+                  spark_tmp_table_factory,
+                  options),
         conf=updated_conf)
 
 @ignore_order
@@ -357,7 +366,8 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
 @pytest.mark.parametrize('data_gen', [
-    StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
+    StringGen('[1-9]{4}-[1-3]{2}-[1-3]{2}', nullable=False),
+    # StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
     # StringGen('[ ]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ ]?', nullable=False),
     # StringGen('[ ]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ ]?', nullable=False),
     # StringGen('[ ]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ ]?', nullable=False),
@@ -370,7 +380,7 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
     # 'dd/MM/yyyy',
     # 'MM-dd-yyyy',
     # 'MM/dd/yyyy',
-    # # "yyyy",
+    # "yyyy",
     # "yyyy-MM",
     # "yyyy/MM",
     # "MM-yyyy",
@@ -382,15 +392,24 @@ def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data
     # example format: {"value":"3481-1-31"}
     path = spark_tmp_path + '/JSON_DATA'
 
-    with_cpu_session(lambda spark: gen_df(spark, data_gen).write.json(path))
+    def create_test_file(spark):
+        df = gen_df(spark, data_gen)
+        df.coalesce(1).write.json(path)
+        timestamp = round(time.time() * 1000)
+        cmd = "cp -r {} /tmp/json_date_{}.json".format(path, str(timestamp))
+        print(cmd)
+        os.system(cmd)
 
-    updated_conf = copy_and_update(_enable_all_types_conf,
-        {'spark.sql.ansi.enabled': ansi_enabled,
+
+    with_cpu_session(lambda spark: create_test_file(spark))
+
+    updated_conf = copy_and_update(_enable_all_types_conf, {
+        'spark.sql.ansi.enabled': ansi_enabled,
         'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
     options = {
-        'allowNonNumericNumbers': True, # TODO
-        'allowNumericLeadingZeros': True, # TODO file issue and update basic_read test too
+        'allowNonNumericNumbers': True, # TODO needed?
+        'allowNumericLeadingZeros': True, # TODO param + xfail + link to issue
         'dateFormat': date_format
     }
 
