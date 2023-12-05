@@ -379,6 +379,9 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
   }
 
   def castStringToDate(input: ColumnVector, dt: DType, failOnInvalid: Boolean): ColumnVector = {
+
+    // TODO make these same changes for timestamps and add tests
+
     val dateFormatPattern = dateFormat.getOrElse("yyyy-MM-dd")
 
     val cudfFormat = DateUtils.toStrf(dateFormatPattern, parseString = true)
@@ -395,11 +398,11 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
         GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
       case _ =>
         // legacy behavior (partial duplicate of code in GpuJsonToStructsShim)
-        withResource(Scalar.fromString(" ")) { space =>
-          withResource(input.strip(space)) { trimmed =>
+//        withResource(Scalar.fromString(" ")) { space =>
+          withResource(input.strip()) { trimmed =>
             GpuCast.castStringToDate(trimmed)
           }
-        }
+//        }
     }
 
     // TODO add tests for EXCEPTION policy handling

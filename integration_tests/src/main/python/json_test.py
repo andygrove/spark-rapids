@@ -367,10 +367,10 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
 
 @pytest.mark.parametrize('data_gen', [
     # TODO test other whitespace chars
-    StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
-    StringGen('[ ]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ ]?', nullable=False),
-    StringGen('[ ]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ ]?', nullable=False),
-    StringGen('[ ]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ ]?', nullable=False),
+    StringGen('[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?', nullable=False),
+    StringGen('[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?', nullable=False),
+    StringGen('[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?', nullable=False),
+    StringGen('[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ \t\xA0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]?', nullable=False),
 ])
 @pytest.mark.parametrize('schema', [StructType([StructField('value', DateType())])])
 @pytest.mark.parametrize('date_format', [
@@ -393,16 +393,7 @@ def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data
     # example format: {"value":"3481-1-31"}
     path = spark_tmp_path + '/JSON_DATA'
 
-    def create_test_file(spark):
-        df = gen_df(spark, data_gen)
-        df.coalesce(1).write.json(path)
-        timestamp = round(time.time() * 1000)
-        cmd = "cp -r {} /tmp/json_date_{}.json".format(path, str(timestamp))
-        print(cmd)
-        os.system(cmd)
-
-
-    with_cpu_session(lambda spark: create_test_file(spark))
+    with_cpu_session(lambda spark: gen_df(spark, data_gen).write.json(path))
 
     updated_conf = copy_and_update(_enable_all_types_conf, {
         'spark.sql.ansi.enabled': ansi_enabled,
