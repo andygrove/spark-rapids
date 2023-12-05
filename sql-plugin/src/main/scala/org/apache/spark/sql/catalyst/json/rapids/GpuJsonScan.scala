@@ -474,6 +474,6 @@ class JsonPartitionReader(
     }
   }
 
-  override def dateFormat: String = GpuJsonUtils.dateFormatInRead(parsedOptions)
+  override def dateFormat: Option[String] = GpuJsonUtils.optionalDateFormatInRead(parsedOptions)
   override def timestampFormat: String = GpuJsonUtils.timestampFormatInRead(parsedOptions)
 }

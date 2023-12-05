@@ -366,25 +366,26 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
 @pytest.mark.parametrize('data_gen', [
-    StringGen('[1-9]{4}-[1-3]{2}-[1-3]{2}', nullable=False),
-    # StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
-    # StringGen('[ ]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ ]?', nullable=False),
-    # StringGen('[ ]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ ]?', nullable=False),
-    # StringGen('[ ]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ ]?', nullable=False),
+    # TODO test other whitespace chars
+    StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
+    StringGen('[ ]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ ]?', nullable=False),
+    StringGen('[ ]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ ]?', nullable=False),
+    StringGen('[ ]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ ]?', nullable=False),
 ])
 @pytest.mark.parametrize('schema', [StructType([StructField('value', DateType())])])
 @pytest.mark.parametrize('date_format', [
+    '',
     'yyyy-MM-dd',
-    # 'yyyy/MM/dd',
-    # 'dd-MM-yyyy',
-    # 'dd/MM/yyyy',
-    # 'MM-dd-yyyy',
-    # 'MM/dd/yyyy',
+    'yyyy/MM/dd',
+    'dd-MM-yyyy',
+    'dd/MM/yyyy',
+    'MM-dd-yyyy',
+    'MM/dd/yyyy',
     # "yyyy",
-    # "yyyy-MM",
-    # "yyyy/MM",
-    # "MM-yyyy",
-    # "MM/yyyy",
+    "yyyy-MM",
+    "yyyy/MM",
+    "MM-yyyy",
+    "MM/yyyy",
 ])
 @pytest.mark.parametrize('ansi_enabled', [True, False])
 def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data_gen, schema, date_format, ansi_enabled):
@@ -410,8 +411,10 @@ def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data
     options = {
         'allowNonNumericNumbers': True, # TODO needed?
         'allowNumericLeadingZeros': True, # TODO param + xfail + link to issue
-        'dateFormat': date_format
     }
+
+    if len(date_format) > 0:
+        options['dateFormat'] = date_format
 
     f = read_json_df(path, schema, spark_tmp_table_factory, options)
     assert_gpu_and_cpu_are_equal_collect(f, conf = updated_conf)

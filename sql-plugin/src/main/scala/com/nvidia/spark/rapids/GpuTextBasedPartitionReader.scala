@@ -371,7 +371,7 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
     }
   }
 
-  def dateFormat: String
+  def dateFormat: Option[String]
   def timestampFormat: String
 
   def castStringToDate(input: ColumnVector, dt: DType): ColumnVector = {
@@ -379,37 +379,30 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
   }
 
   def castStringToDate(input: ColumnVector, dt: DType, failOnInvalid: Boolean): ColumnVector = {
-    val cudfFormat = DateUtils.toStrf(dateFormat, parseString = true)
+    val dateFormatPattern = dateFormat.getOrElse("yyyy-MM-dd")
+
+    val cudfFormat = DateUtils.toStrf(dateFormatPattern, parseString = true)
 
     val twoDigits = raw"\d{2}"
     val fourDigits = raw"\d{4}"
 
-    val regexRoot = dateFormat
+    val regexRoot = dateFormatPattern
       .replace("yyyy", fourDigits)
       .replace("MM", twoDigits)
       .replace("dd", twoDigits)
 
-    withResource(input.strip()) { stripped =>
-      GpuCast.convertDateOrNull(stripped, "^" + regexRoot + "$", cudfFormat)
+    dateFormat match {
+      case Some(_) =>
+        GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
+      case _ =>
+        // legacy behavior
+        // TODO strip just " " or all whitespace?
+        withResource(input.strip()) { stripped =>
+          GpuCast.convertDateOrNull(stripped, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
+        }
     }
 
-    // TODO reinstate EXCEPTION policy handling and add tests
-
-//      withResource(stripped.isTimestamp(cudfFormat)) { isDate =>
-//        if (failOnInvalid && GpuOverrides.getTimeParserPolicy == ExceptionTimeParserPolicy) {
-//          withResource(isDate.all()) { all =>
-//            if (all.isValid && !all.getBoolean) {
-//              throw new DateTimeException("One or more values is not a valid date")
-//            }
-//          }
-//        }
-//        withResource(stripped.asTimestamp(dt, cudfFormat)) { asDate =>
-//          withResource(Scalar.fromNull(dt)) { nullScalar =>
-//            isDate.ifElse(asDate, nullScalar)
-//          }
-//        }
-//      }
-//    }
+    // TODO add tests for EXCEPTION policy handling
   }
 
   def castStringToTimestamp(
