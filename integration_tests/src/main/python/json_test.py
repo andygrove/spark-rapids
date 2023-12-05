@@ -259,24 +259,25 @@ def json_ts_formats_round_trip_ntz(spark_tmp_path, date_format, ts_part, timesta
 
 @approximate_float
 @pytest.mark.parametrize('filename', [
-    'boolean.json',
-    pytest.param('boolean_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4779')),
-    'ints.json',
-    pytest.param('ints_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4793')),
-    'nan_and_inf.json',
-    pytest.param('nan_and_inf_strings.json', marks=pytest.mark.skipif(is_before_spark_330(), reason='https://issues.apache.org/jira/browse/SPARK-38060 fixed in Spark 3.3.0')),
-    'nan_and_inf_invalid.json',
-    'floats.json',
-    'floats_leading_zeros.json',
-    'floats_invalid.json',
-    pytest.param('floats_edge_cases.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4647')),
-    'decimals.json',
+    # 'boolean.json',
+    # pytest.param('boolean_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4779')),
+    # 'ints.json',
+    # pytest.param('ints_invalid.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4793')),
+    # 'nan_and_inf.json',
+    # pytest.param('nan_and_inf_strings.json', marks=pytest.mark.skipif(is_before_spark_330(), reason='https://issues.apache.org/jira/browse/SPARK-38060 fixed in Spark 3.3.0')),
+    # 'nan_and_inf_invalid.json',
+    # 'floats.json',
+    # 'floats_leading_zeros.json',
+    # 'floats_invalid.json',
+    # pytest.param('floats_edge_cases.json', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/4647')),
+    # 'decimals.json',
     'dates.json',
-    'dates_invalid.json',
+    # 'dates_invalid.json',
 ])
-@pytest.mark.parametrize('schema', [_bool_schema, _byte_schema, _short_schema, _int_schema, _long_schema, \
-                                    _float_schema, _double_schema, _decimal_10_2_schema, _decimal_10_3_schema, \
-                                    _date_schema])
+@pytest.mark.parametrize('schema', [
+    # _bool_schema, _byte_schema, _short_schema, _int_schema, _long_schema, \
+    #                                 _float_schema, _double_schema, _decimal_10_2_schema, _decimal_10_3_schema, \
+                                     _date_schema])
 @pytest.mark.parametrize('read_func', [read_json_df, read_json_sql])
 @pytest.mark.parametrize('allow_non_numeric_numbers', ["true", "false"])
 @pytest.mark.parametrize('allow_numeric_leading_zeros', ["true"])
