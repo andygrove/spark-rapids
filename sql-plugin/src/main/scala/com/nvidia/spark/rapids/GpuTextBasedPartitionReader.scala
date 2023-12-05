@@ -383,19 +383,35 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
 
     val cudfFormat = DateUtils.toStrf(dateFormatPattern, parseString = true)
 
-    val twoDigits = raw"\d{2}"
-    val fourDigits = raw"\d{4}"
-
-    val regexRoot = dateFormatPattern
-      .replace("yyyy", fourDigits)
-      .replace("MM", twoDigits)
-      .replace("dd", twoDigits)
-
     dateFormat match {
       case Some(_) =>
+        val twoDigits = raw"\d{2}"
+        val fourDigits = raw"\d{4}"
+
+        val regexRoot = dateFormatPattern
+          .replace("yyyy", fourDigits)
+          .replace("MM", twoDigits)
+          .replace("dd", twoDigits)
         GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
       case _ =>
+
+        /*
+        JsonToStructShim version
+        withResource(Scalar.fromString(" ")) { space =>
+          withResource(input.strip(space)) { trimmed =>
+            GpuCast.castStringToDate(trimmed)
+          }
+        }
+
+         */
         // legacy behavior
+        val twoDigits = raw"\d{1,2}"
+        val fourDigits = raw"\d{4}"
+
+        val regexRoot = dateFormatPattern
+          .replace("yyyy", fourDigits)
+          .replace("MM", twoDigits)
+          .replace("dd", twoDigits)
         // TODO strip just " " or all whitespace?
         withResource(input.strip()) { stripped =>
           GpuCast.convertDateOrNull(stripped, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
