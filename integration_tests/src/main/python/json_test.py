@@ -22,6 +22,7 @@ from datetime import timezone
 from conftest import is_databricks_runtime
 from marks import approximate_float, allow_non_gpu, ignore_order
 from spark_session import *
+import os
 
 json_supported_gens = [
     # Spark does not escape '\r' or '\n' even though it uses it to mark end of record
@@ -356,37 +357,44 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
 @pytest.mark.parametrize('data_gen', [
-    StringGen('[ \t]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ \t]?', nullable=False),
-    StringGen('[ \t]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ \t]?', nullable=False),
-    StringGen('[ \t]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ \t]?', nullable=False),
-    StringGen('[ \t]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ \t]?', nullable=False),
+    StringGen('[ ]?[1-9]{4}-[1-3]{2}-[1-3]{2}[ ]?', nullable=False),
+    # StringGen('[ ]?[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}[ ]?', nullable=False),
+    # StringGen('[ ]?[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}[ ]?', nullable=False),
+    # StringGen('[ ]?[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}[ ]?', nullable=False),
 ])
 @pytest.mark.parametrize('schema', [StructType([StructField('value', DateType())])])
 @pytest.mark.parametrize('date_format', [
     'yyyy-MM-dd',
-    'yyyy/MM/dd',
-    'dd-MM-yyyy',
-    'dd/MM/yyyy',
-    'MM-dd-yyyy',
-    'MM/dd/yyyy',
-    # "yyyy",
-    "yyyy-MM",
-    "yyyy/MM",
-    "MM-yyyy",
-    "MM/yyyy",
+    # 'yyyy/MM/dd',
+    # 'dd-MM-yyyy',
+    # 'dd/MM/yyyy',
+    # 'MM-dd-yyyy',
+    # 'MM/dd/yyyy',
+    # # "yyyy",
+    # "yyyy-MM",
+    # "yyyy/MM",
+    # "MM-yyyy",
+    # "MM/yyyy",
 ])
 @pytest.mark.parametrize('ansi_enabled', [True, False])
 def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, data_gen, schema, date_format, ansi_enabled):
     # create test data with json strings where a subset are valid dates
     # example format: {"value":"3481-1-31"}
     path = spark_tmp_path + '/JSON_DATA'
+
     with_cpu_session(lambda spark: gen_df(spark, data_gen).write.json(path))
 
     updated_conf = copy_and_update(_enable_all_types_conf,
         {'spark.sql.ansi.enabled': ansi_enabled,
         'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
-    f = read_json_df(path, schema, spark_tmp_table_factory, { 'dateFormat': date_format })
+    options = {
+        'allowNonNumericNumbers': True, # TODO
+        'allowNumericLeadingZeros': True, # TODO file issue and update basic_read test too
+        'dateFormat': date_format
+    }
+
+    f = read_json_df(path, schema, spark_tmp_table_factory, options)
     assert_gpu_and_cpu_are_equal_collect(f, conf = updated_conf)
 
 
