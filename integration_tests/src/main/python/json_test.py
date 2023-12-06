@@ -314,8 +314,11 @@ def json_ts_formats_round_trip_ntz(spark_tmp_path, timestamp_format, timestamp_t
                                     _float_schema, _double_schema, _decimal_10_2_schema, _decimal_10_3_schema, \
                                     _date_schema])
 @pytest.mark.parametrize('read_func', [read_json_df, read_json_sql])
-@pytest.mark.parametrize('allow_non_numeric_numbers', ["true", "false"])
-@pytest.mark.parametrize('allow_numeric_leading_zeros', ["true"])
+@pytest.mark.parametrize('allow_non_numeric_numbers', ['true', 'false'])
+@pytest.mark.parametrize('allow_numeric_leading_zeros', [
+    'true',
+    pytest.param('false', marks=pytest.mark.xfail(reason='https://github.com/NVIDIA/spark-rapids/issues/9588')),
+])
 @pytest.mark.parametrize('ansi_enabled', ["true", "false"])
 @pytest.mark.parametrize('date_format', ['', 'yyyy-MM-dd'])
 def test_basic_json_read(std_input_path, filename, schema, read_func, allow_non_numeric_numbers, \
@@ -400,28 +403,19 @@ def test_json_read_valid_dates(std_input_path, filename, schema, read_func, ansi
         assert_gpu_and_cpu_are_equal_collect(f, conf=updated_conf)
 
 @pytest.mark.parametrize('date_gen_pattern', [
+    '[0-9]{1,4}-[0-3]{1,2}-[0-3]{1,2}',
+    '[0-9]{1,2}-[0-3]{1,2}-[0-9]{1,4}',
     '[1-9]{4}-[1-3]{2}-[1-3]{2}',
     '[1-9]{4}-[1-3]{1,2}-[1-3]{1,2}',
     '[1-3]{1,2}-[1-3]{1,2}-[1-9]{4}',
     '[1-3]{1,2}/[1-3]{1,2}/[1-9]{4}',
 ])
 @pytest.mark.parametrize('schema', [StructType([StructField('value', DateType())])])
-@pytest.mark.parametrize('date_format', [
-    '',
-    'yyyy-MM-dd',
-    'yyyy/MM/dd',
-    'dd-MM-yyyy',
-    'dd/MM/yyyy',
-    'MM-dd-yyyy',
-    'MM/dd/yyyy',
-    # "yyyy",
-    "yyyy-MM",
-    "yyyy/MM",
-    "MM-yyyy",
-    "MM/yyyy",
-])
+@pytest.mark.parametrize('date_format', json_supported_date_formats)
 @pytest.mark.parametrize('ansi_enabled', [True, False])
-def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, date_gen_pattern, schema, date_format, ansi_enabled):
+@pytest.mark.parametrize('allow_numeric_leading_zeros', [True, False])
+def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, date_gen_pattern, schema, date_format, \
+        ansi_enabled, allow_numeric_leading_zeros):
     # create test data with json strings where a subset are valid dates
     # example format: {"value":"3481-1-31"}
     path = spark_tmp_path + '/JSON_DATA'
@@ -434,11 +428,7 @@ def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, date
         'spark.sql.ansi.enabled': ansi_enabled,
         'spark.sql.legacy.timeParserPolicy': 'CORRECTED'})
 
-    options = {
-        'allowNonNumericNumbers': True, # TODO needed?
-        'allowNumericLeadingZeros': True, # TODO param + xfail + link to issue
-    }
-
+    options = { 'allowNumericLeadingZeros': allow_numeric_leading_zeros }
     if len(date_format) > 0:
         options['dateFormat'] = date_format
 
