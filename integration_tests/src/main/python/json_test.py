@@ -453,17 +453,19 @@ def test_json_read_generated_dates(spark_tmp_table_factory, spark_tmp_path, date
 @pytest.mark.parametrize('schema', [_date_schema])
 @pytest.mark.parametrize('read_func', [read_json_df, read_json_sql])
 @pytest.mark.parametrize('ansi_enabled', ["true", "false"])
-# TODO dateFormat '' and 'yyyy-MM-dd'
+@pytest.mark.parametrize('date_format', ['', 'yyyy-MM-dd'])
 @pytest.mark.parametrize('time_parser_policy', [
     pytest.param('LEGACY', marks=pytest.mark.allow_non_gpu('FileSourceScanExec')),
     'CORRECTED',
     'EXCEPTION'
 ])
-def test_json_read_invalid_dates(std_input_path, filename, schema, read_func, ansi_enabled, time_parser_policy, spark_tmp_table_factory):
+def test_json_read_invalid_dates(std_input_path, filename, schema, read_func, ansi_enabled, date_format, \
+        time_parser_policy, spark_tmp_table_factory):
     updated_conf = copy_and_update(_enable_all_types_conf,
                                    {'spark.sql.ansi.enabled': ansi_enabled,
                                     'spark.sql.legacy.timeParserPolicy': time_parser_policy })
-    f = read_func(std_input_path + '/' + filename, schema, spark_tmp_table_factory, {})
+    options = { 'dateFormat': date_format } if len(date_format) > 0 else {}
+    f = read_func(std_input_path + '/' + filename, schema, spark_tmp_table_factory, options)
     if time_parser_policy == 'EXCEPTION':
         assert_gpu_and_cpu_error(
             df_fun=lambda spark: f(spark).collect(),
