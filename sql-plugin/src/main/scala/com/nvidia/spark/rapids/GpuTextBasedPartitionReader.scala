@@ -395,17 +395,17 @@ abstract class GpuTextBasedPartitionReader[BUFF <: LineBufferer, FACT <: LineBuf
           .replace("yyyy", fourDigits)
           .replace("MM", twoDigits)
           .replace("dd", twoDigits)
-        GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
+        GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat)
       case _ =>
-        // legacy behavior (partial duplicate of code in GpuJsonToStructsShim)
+        // legacy behavior
+        // TODO this is similar to, but different from  GpuJsonToStructsShim
 //        withResource(Scalar.fromString(" ")) { space =>
           withResource(input.strip()) { trimmed =>
-            GpuCast.castStringToDate(trimmed)
+            // TODO add tests for EXCEPTION policy handling
+            GpuCast.castStringToDateAnsi(trimmed, ansiMode = false) // TODO
           }
 //        }
     }
-
-    // TODO add tests for EXCEPTION policy handling
   }
 
   def castStringToTimestamp(
