@@ -16,6 +16,7 @@
 /*** spark-rapids-shim-json-lines
 {"spark": "311"}
 {"spark": "312"}
+
 {"spark": "313"}
 spark-rapids-shim-json-lines ***/
 package com.nvidia.spark.rapids.shims

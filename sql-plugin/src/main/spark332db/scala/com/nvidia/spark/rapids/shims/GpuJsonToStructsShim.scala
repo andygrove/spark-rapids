@@ -1,0 +1,110 @@
+/*
+ * Copyright (c) 2023, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+/*** spark-rapids-shim-json-lines
+{"spark": "332db"}
+spark-rapids-shim-json-lines ***/
+package com.nvidia.spark.rapids.shims
+
+import ai.rapids.cudf.{ColumnVector, DType, Scalar}
+import com.nvidia.spark.rapids.{DateUtils, GpuCast, GpuOverrides, RapidsMeta}
+import com.nvidia.spark.rapids.Arm.withResource
+
+import org.apache.spark.sql.catalyst.json.GpuJsonUtils
+import org.apache.spark.sql.rapids.ExceptionTimeParserPolicy
+
+/**
+ * 332db pulls in some changes from 340 so needs to be shimmed differently.
+ *
+ * This shim is identical to the 340 version, but different from the 320 and 333 versions (which are the same).
+ */
+object GpuJsonToStructsShim {
+
+  def tagDateFormatSupport(meta: RapidsMeta[_, _, _], dateFormat: Option[String]): Unit = {
+  }
+
+  def castJsonStringToDate(input: ColumnVector, options: Map[String, String]): ColumnVector = {
+    GpuJsonUtils.optionalDateFormatInRead(options) match {
+      case None =>
+        // legacy behavior
+        withResource(Scalar.fromString(" ")) { space =>
+          withResource(input.strip(space)) { trimmed =>
+            GpuCast.castStringToDate(trimmed)
+          }
+        }
+      case Some(f) =>
+        // from_json does not respect EXCEPTION policy
+        jsonStringToDate(input, f, failOnInvalid = false)
+    }
+  }
+
+  def tagDateFormatSupportFromScan(meta: RapidsMeta[_, _, _], dateFormat: Option[String]): Unit = {
+  }
+
+  def castJsonStringToDateFromScan(input: ColumnVector, dt: DType,
+      dateFormat: Option[String]): ColumnVector = {
+    dateFormat match {
+      case None =>
+        // legacy behavior
+        withResource(input.strip()) { trimmed =>
+          GpuCast.castStringToDateAnsi(trimmed, ansiMode =
+            GpuOverrides.getTimeParserPolicy == ExceptionTimeParserPolicy)
+        }
+      case Some(f) =>
+        jsonStringToDate(input, f,
+          GpuOverrides.getTimeParserPolicy == ExceptionTimeParserPolicy)
+    }
+  }
+
+  private def jsonStringToDate(input: ColumnVector, dateFormatPattern: String,
+      failOnInvalid: Boolean): ColumnVector = {
+    val regexRoot = dateFormatPattern
+      .replace("yyyy", raw"\d{4}")
+      .replace("MM", raw"\d{2}")
+      .replace("dd", raw"\d{2}")
+    val cudfFormat = DateUtils.toStrf(dateFormatPattern, parseString = true)
+    GpuCast.convertDateOrNull(input, "^" + regexRoot + "$", cudfFormat, failOnInvalid)
+  }
+
+  def tagTimestampFormatSupport(meta: RapidsMeta[_, _, _],
+      timestampFormat: Option[String]): Unit = {
+    timestampFormat match {
+      case None | Some("yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX]") =>
+        // fine
+      case other =>
+        meta.willNotWorkOnGpu(s"Unsupported timestampFormat ${other}")
+    }
+  }
+
+  def castJsonStringToTimestamp(input: ColumnVector,
+      options: Map[String, String]): ColumnVector = {
+    options.get("timestampFormat") match {
+      case None =>
+        // legacy behavior
+        withResource(Scalar.fromString(" ")) { space =>
+          withResource(input.strip(space)) { trimmed =>
+            // from_json doesn't respect ansi mode
+            GpuCast.castStringToTimestamp(trimmed, ansiMode = false)
+          }
+        }
+      case Some("yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX]") =>
+        GpuCast.convertTimestampOrNull(input,
+          "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z?$", "%Y-%m-%d")
+      case other =>
+        // should be unreachable due to GpuOverrides checks
+        throw new IllegalStateException(s"Unsupported timestampFormat $other")
+      }
+  }
+}
