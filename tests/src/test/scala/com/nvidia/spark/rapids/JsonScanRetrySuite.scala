@@ -16,13 +16,59 @@
 
 package com.nvidia.spark.rapids
 
-import ai.rapids.cudf.JSONOptions
+import ai.rapids.cudf.{ColumnVector, DType, JSONOptions, Schema, Table}
 import com.nvidia.spark.rapids.jni.RmmSpark
 
 import org.apache.spark.sql.catalyst.json.rapids.JsonPartitionReader
 import org.apache.spark.sql.types._
 
 class JsonScanRetrySuite extends RmmSparkRetrySuiteBase {
+
+  test("from_json OOM int") {
+    doTest(1000000, "1", DataTypes.IntegerType)
+  }
+
+  test("from_json OOM bool") {
+    doTest(1000000, "true", DataTypes.BooleanType)
+  }
+
+  test("from_json OOM date") {
+    doTest(1000000, "2023-12-12", DataTypes.DateType)
+  }
+
+  def doTest(n: Int, value: String, toType: DataType): Unit = {
+
+    val b = Schema.builder()
+    b.column(DType.STRING, "a");
+    val schema = b.build()
+
+    val json = new StringBuilder()
+    for (_ <- 0 to n) {
+      json.append("{ \"a\": 1 }\n")
+    }
+    val bytes = json.toString.getBytes
+
+    println(s"Bytes = ${bytes.length / (1024.0 * 1024.0)} GB")
+
+    val opts = JSONOptions.builder().withLines(true).build()
+
+    val table = Table.readJSON(schema, opts, bytes)
+
+    println("Table mem size = " + table.getDeviceMemorySize)
+
+    val col: ColumnVector = table.getColumn(0)
+    println(col.getClass.getSimpleName)
+
+    println("Cast input mem size= " + col.getDeviceMemorySize)
+
+    val col2 = GpuCast.doCast(col, DataTypes.StringType, toType,
+      CastOptions.DEFAULT_CAST_OPTIONS)
+
+    println("Cast output mem size= " + col2.getDeviceMemorySize)
+
+    table.close()
+  }
+
   test("test simple retry") {
     val bufferer = HostLineBuffererFactory.createBufferer(100, Array('\n'.toByte))
     bufferer.add("{\"a\": 1, \"b\": 2".getBytes, 0, 14)
