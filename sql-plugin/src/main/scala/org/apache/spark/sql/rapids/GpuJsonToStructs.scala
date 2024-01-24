@@ -257,12 +257,20 @@ case class GpuJsonToStructs(
             withResource(columns) { columns =>
               withResource(cudf.ColumnVector.makeStruct(columns: _*)) { structData =>
                 // Step 8: put nulls back in for nulls and empty strings
-                withResource(GpuScalar.from(null, newStruct)) { nullVal =>
+                if (columns.exists(_.getType == DType.STRUCT)) {
+                  // TODO cannot call ifElse due to mismatch between
+                  //  scalar when structs are present
+                  // cannot even print the scalar to debug this due to
+                  // https://github.com/rapidsai/cudf/issues/14855
+                  structData.incRefCount()
+                } else {
+                  withResource(GpuScalar.from(null, newStruct)) { nullVal =>
 
-                  // scalar and column types must match
-                  // at ai.rapids.cudf.ColumnView.ifElseSV(Native Method)
+                    // scalar and column types must match
+                    // at ai.rapids.cudf.ColumnView.ifElseSV(Native Method)
 
-                  isNullOrEmpty.ifElse(nullVal, structData)
+                    isNullOrEmpty.ifElse(nullVal, structData)
+                  }
                 }
               }
             }
