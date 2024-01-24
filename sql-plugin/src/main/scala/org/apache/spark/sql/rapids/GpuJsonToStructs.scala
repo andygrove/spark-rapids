@@ -25,9 +25,10 @@ import com.nvidia.spark.rapids.RapidsPluginImplicits.AutoCloseableProducingSeq
 import com.nvidia.spark.rapids.jni.MapUtils
 import com.nvidia.spark.rapids.shims.GpuJsonToStructsShim
 import org.apache.commons.text.StringEscapeUtils
-
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, NullIntolerant, TimeZoneAwareExpression}
 import org.apache.spark.sql.types._
+
+import scala.collection.mutable.ListBuffer
 
 case class GpuJsonToStructs(
     schema: DataType,
@@ -177,9 +178,7 @@ case class GpuJsonToStructs(
 
             val jsonOptions = cudf.JSONOptions.builder()
               .withRecoverWithNull(true)
-              // tracking issue for enabling mixed type as string
-              // https://github.com/NVIDIA/spark-rapids/issues/10253
-              .withMixedTypesAsStrings(false)
+              .withMixedTypesAsStrings(true)
               .build()
             withResource(cudf.Table.readJSON(jsonOptions, data, start, length)) { tableWithMeta =>
               val names = tableWithMeta.getColumnNames
@@ -199,14 +198,26 @@ case class GpuJsonToStructs(
             }
 
             // Step 6: get the data based on input struct schema
+            val newFields = new ListBuffer[StructField]()
+
             val columns = fieldNames.safeMap { case (name, dtype) =>
               val i = names.indexOf(name)
               if (i == -1) {
                 GpuColumnVector.columnVectorFromNull(numRows, dtype)
               } else {
                 val col = rawTable.getColumn(i)
+
                 // getSparkType is only used to get the "from type" for cast
                 val sparkType = getSparkType(col)
+
+                (sparkType, dtype) match {
+                  case (StringType, _: StructType) =>
+                    // mixed type
+                    newFields += StructField(name, StringType, true)
+                  case _ =>
+                    newFields += StructField(name, dtype, true)
+                }
+
                 (sparkType, dtype) match {
                   case (DataTypes.StringType, DataTypes.BooleanType) =>
                     castJsonStringToBool(col)
@@ -220,17 +231,37 @@ case class GpuJsonToStructs(
                     GpuCast.castLongToTimestamp(col, DataTypes.TimestampType)
                   case (_, DataTypes.TimestampType) =>
                     castToNullTimestamp(input.getBase)
-                  case _ => GpuCast.doCast(col, sparkType, dtype)
-                }
+                  case (_: StructType, _: StructType) =>
+                    col.incRefCount()
+                  case (StringType, _: StructType) =>
+                    // mixed type ?
+                    col.incRefCount()
 
+                  case _ =>
+                    println(s"Generic cast from $sparkType to $dtype")
+                    // Generic cast from
+                    // StructType(StructField(,StringType,true),StructField(,LongType,true))
+                    // to
+                    // StructType(StructField(name,StringType,true),
+                    //  StructField(age,IntegerType,true))
+
+
+                    GpuCast.doCast(col, sparkType, dtype)
+                }
               }
             }
+
+            val newStruct = new StructType(newFields.toArray)
 
             // Step 7: turn the data into a Struct
             withResource(columns) { columns =>
               withResource(cudf.ColumnVector.makeStruct(columns: _*)) { structData =>
                 // Step 8: put nulls back in for nulls and empty strings
-                withResource(GpuScalar.from(null, struct)) { nullVal =>
+                withResource(GpuScalar.from(null, newStruct)) { nullVal =>
+
+                  // scalar and column types must match
+                  // at ai.rapids.cudf.ColumnView.ifElseSV(Native Method)
+
                   isNullOrEmpty.ifElse(nullVal, structData)
                 }
               }

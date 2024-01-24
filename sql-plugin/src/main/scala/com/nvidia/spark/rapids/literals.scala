@@ -344,7 +344,9 @@ object GpuScalar extends Logging {
         val cvs = fields.zipWithIndex.safeMap {
           case (f, i) =>
             val dt = f.dataType
-            columnVectorFromLiterals(Seq(row.get(i, dt)), dt)
+            val x = columnVectorFromLiterals(Seq(row.get(i, dt)), dt)
+            println(s"columnVectorFromLiterals = ${x.getType}")
+            x
         }
         withResource(cvs) { cvs =>
           Scalar.structFromColumnViews(cvs: _*)
