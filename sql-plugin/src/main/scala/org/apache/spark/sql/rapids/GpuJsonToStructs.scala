@@ -98,15 +98,15 @@ case class GpuJsonToStructs(
                 val t6 = System.currentTimeMillis()
                 println(s"PERF: cleanAndConcat: joinStrings: ${t6-t5} millis")
 
-                val concat = withResource(joined) { _ =>
-                  withResource(ColumnVector.fromStrings("\n")) { newline =>
-                    ColumnVector.stringConcatenate(Array[ColumnView](joined, newline))
-                  }
-                }
+//                val concat = withResource(joined) { _ =>
+//                  withResource(ColumnVector.fromStrings("\n")) { newline =>
+//                    ColumnVector.stringConcatenate(Array[ColumnView](joined, newline))
+//                  }
+//                }
                 val t7 = System.currentTimeMillis()
                 println(s"PERF: cleanAndConcat: stringConcatenate: ${t7-t6} millis")
 
-                (isNullOrEmptyInput, concat)
+                (isNullOrEmptyInput, joined)
               }
             }
           }
