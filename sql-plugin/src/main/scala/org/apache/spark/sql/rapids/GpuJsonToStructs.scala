@@ -162,12 +162,20 @@ case class GpuJsonToStructs(
 
         // Step 1: verify and preprocess the data to clean it up and normalize a few things
         // Step 2: Concat the data into a single buffer
+        val t1 = System.currentTimeMillis()
         val (isNullOrEmpty, combined) = cleanAndConcat(input.getBase)
+        val t2 = System.currentTimeMillis()
+        println(s"PERF: cleanAndConcat=${t2-t1} millis")
+
         withResource(isNullOrEmpty) { isNullOrEmpty =>
           // Step 3: copy the data back to the host so we can parse it.
+          val t3 = System.currentTimeMillis()
           val combinedHost = withResource(combined) { combined =>
             combined.copyToHost()
           }
+          val t4 = System.currentTimeMillis()
+          println(s"PERF: copyToHost=${t4-t3} millis")
+
           // Step 4: Have cudf parse the JSON data
           val (names, rawTable) = withResource(combinedHost) { combinedHost =>
             val data = combinedHost.getData
@@ -181,10 +189,15 @@ case class GpuJsonToStructs(
               // https://github.com/NVIDIA/spark-rapids/issues/10253
               .withMixedTypesAsStrings(false)
               .build()
-            withResource(cudf.Table.readJSON(jsonOptions, data, start, length)) { tableWithMeta =>
+            val t5 = System.currentTimeMillis()
+            val x = withResource(cudf.Table.readJSON(jsonOptions, data, start, length)) {
+                tableWithMeta =>
               val names = tableWithMeta.getColumnNames
               (names, tableWithMeta.releaseTable())
             }
+            val t6 = System.currentTimeMillis()
+            println(s"PERF: readJSON=${t6-t5} millis")
+            x
           }
 
           // process duplicated field names in input struct schema
@@ -199,6 +212,7 @@ case class GpuJsonToStructs(
             }
 
             // Step 6: get the data based on input struct schema
+            val t7 = System.currentTimeMillis()
             val columns = fieldNames.safeMap { case (name, dtype) =>
               val i = names.indexOf(name)
               if (i == -1) {
@@ -226,8 +240,12 @@ case class GpuJsonToStructs(
               }
             }
 
+            val t8 = System.currentTimeMillis()
+            println(s"PERF: cast=${t8-t7} millis")
+
             // Step 7: turn the data into a Struct
-            withResource(columns) { columns =>
+            val t9 = System.currentTimeMillis()
+            val x = withResource(columns) { columns =>
               withResource(cudf.ColumnVector.makeStruct(columns: _*)) { structData =>
                 // Step 8: put nulls back in for nulls and empty strings
                 withResource(GpuScalar.from(null, struct)) { nullVal =>
@@ -235,6 +253,10 @@ case class GpuJsonToStructs(
                 }
               }
             }
+            val t10 = System.currentTimeMillis()
+            println(s"PERF: postProcessing=${t10-t9} millis")
+
+            x
           }
         }
       }
