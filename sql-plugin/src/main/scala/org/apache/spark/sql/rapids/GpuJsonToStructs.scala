@@ -17,7 +17,7 @@
 package org.apache.spark.sql.rapids
 
 import ai.rapids.cudf
-import ai.rapids.cudf.{ColumnVector, ColumnView, DType, Scalar}
+import ai.rapids.cudf.{ColumnVector, DType, Scalar}
 import com.nvidia.spark.rapids.{GpuColumnVector, GpuScalar, GpuUnaryExpression}
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.GpuCast
