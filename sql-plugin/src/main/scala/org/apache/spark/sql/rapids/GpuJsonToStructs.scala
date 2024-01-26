@@ -48,6 +48,8 @@ case class GpuJsonToStructs(
   }
 
   private def cleanAndConcat(input: cudf.ColumnVector): (cudf.ColumnVector, cudf.ColumnVector) = {
+
+    val t1 = System.currentTimeMillis()
     val stripped = if (input.getData == null) {
       input.incRefCount
     } else {
@@ -55,6 +57,8 @@ case class GpuJsonToStructs(
         input.strip(space)
       }
     }
+    val t2 = System.currentTimeMillis()
+    println(s"PERF: cleanAndConcat: strip: ${t2-t1} millis")
 
     withResource(stripped) { stripped =>
       val isEmpty = withResource(stripped.getCharLengths) { lengths =>
@@ -67,6 +71,8 @@ case class GpuJsonToStructs(
           isNull.binaryOp(cudf.BinaryOp.NULL_LOGICAL_OR, isEmpty, cudf.DType.BOOL8)
         }
       }
+      val t3 = System.currentTimeMillis()
+      println(s"PERF: cleanAndConcat: isNullOrEmpty: ${t3-t2} millis")
       closeOnExcept(isNullOrEmptyInput) { _ =>
         withResource(cudf.Scalar.fromString(emptyRowStr)) { emptyRow =>
           withResource(isNullOrEmptyInput.ifElse(emptyRow, stripped)) { nullsReplaced =>
@@ -75,19 +81,30 @@ case class GpuJsonToStructs(
             }
             withResource(isLiteralNull) { _ =>
               withResource(isLiteralNull.ifElse(emptyRow, nullsReplaced)) { cleaned =>
+                val t4 = System.currentTimeMillis()
+                println(s"PERF: cleanAndConcat: literalNull: ${t4-t3} millis")
+
                 checkForNewline(cleaned, "\n", "line separator")
                 checkForNewline(cleaned, "\r", "carriage return")
+                val t5 = System.currentTimeMillis()
+                println(s"PERF: cleanAndConcat: checkNewline: ${t5-t4} millis")
+
                 // if the last entry in a column is incomplete or invalid, then cuDF
                 // will drop the row rather than replace with null if there is no newline, so we
                 // add a newline here to prevent that
                 val joined = withResource(cudf.Scalar.fromString("\n")) { lineSep =>
                   cleaned.joinStrings(lineSep, emptyRow)
                 }
+                val t6 = System.currentTimeMillis()
+                println(s"PERF: cleanAndConcat: joinStrings: ${t6-t5} millis")
+
                 val concat = withResource(joined) { _ =>
                   withResource(ColumnVector.fromStrings("\n")) { newline =>
                     ColumnVector.stringConcatenate(Array[ColumnView](joined, newline))
                   }
                 }
+                val t7 = System.currentTimeMillis()
+                println(s"PERF: cleanAndConcat: stringConcatenate: ${t7-t6} millis")
 
                 (isNullOrEmptyInput, concat)
               }
