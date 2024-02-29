@@ -16,12 +16,13 @@
 package org.apache.spark.sql.rapids.execution
 
 import com.nvidia.spark.rapids.{CoalesceGoal, GpuExec, GpuMetric}
-import com.nvidia.spark.rapids.shims.ShimUnaryExecNode
+import com.nvidia.spark.rapids.shims.{AQEShuffleReaderShims, ShimUnaryExecNode}
 
+import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
-import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
+import org.apache.spark.sql.catalyst.plans.physical.{CoalescedBoundary, CoalescedHashPartitioning, HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
 import org.apache.spark.sql.catalyst.trees.CurrentOrigin
 import org.apache.spark.sql.execution.{CoalescedMapperPartitionSpec, CoalescedPartitionSpec, PartialMapperPartitionSpec, PartialReducerPartitionSpec, ShufflePartitionSpec, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
@@ -83,26 +84,7 @@ case class GpuCustomShuffleReaderExec(
           throw new IllegalStateException("operating on canonicalization plan")
       }
     } else if (isCoalescedRead) {
-      // For coalesced shuffle read, the data distribution is not changed, only the number of
-      // partitions is changed.
-      child.outputPartitioning match {
-        case h: HashPartitioning =>
-          CurrentOrigin.withOrigin(h.origin)(h.copy(numPartitions = partitionSpecs.length))
-        case r: RangePartitioning =>
-          CurrentOrigin.withOrigin(r.origin)(r.copy(numPartitions = partitionSpecs.length))
-        // This can only happen for `REBALANCE_PARTITIONS_BY_NONE`, which uses
-        // `RoundRobinPartitioning` but we don't need to retain the number of partitions.
-        case r: RoundRobinPartitioning =>
-          r.copy(numPartitions = partitionSpecs.length)
-        case other @ SinglePartition =>
-          throw new IllegalStateException(
-            "Unexpected partitioning for coalesced shuffle read: " + other)
-        case _ =>
-          // Spark plugins may have custom partitioning and may replace this operator
-          // during the postStageOptimization phase, so return UnknownPartitioning here
-          // rather than throw an exception
-          UnknownPartitioning(partitionSpecs.length)
-      }
+      AQEShuffleReaderShims.coalescedReadOutputPartitioning(child.outputPartitioning)
     } else {
       UnknownPartitioning(partitionSpecs.length)
     }
@@ -126,14 +108,8 @@ case class GpuCustomShuffleReaderExec(
     Iterator(desc)
   }
 
-  private def isCoalescedSpec(spec: ShufflePartitionSpec) = spec match {
-    case c: CoalescedPartitionSpec if c.startReducerIndex == 0 && c.endReducerIndex == 0 => true
-    case s: CoalescedPartitionSpec => s.endReducerIndex - s.startReducerIndex > 1
-    case _ => false
-  }
-
   def hasCoalescedPartition: Boolean = {
-    partitionSpecs.exists(isCoalescedSpec)
+    partitionSpecs.exists(AQEShuffleReaderShims.isCoalescedSpec)
   }
 
   def hasSkewedPartition: Boolean =
