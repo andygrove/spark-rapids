@@ -30,14 +30,12 @@
 {"spark": "332db"}
 {"spark": "333"}
 {"spark": "334"}
-{"spark": "340"}
-{"spark": "341"}
-{"spark": "341db"}
-{"spark": "342"}
-{"spark": "350"}
-{"spark": "351"}
 spark-rapids-shim-json-lines ***/
 package com.nvidia.spark.rapids.shims
+
+import org.apache.spark.sql.catalyst.trees.CurrentOrigin
+import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
+import org.apache.spark.sql.execution.{CoalescedMapperPartitionSpec, CoalescedPartitionSpec, PartialMapperPartitionSpec, ShufflePartitionSpec}
 
 object AQEShuffleReaderShims {
 
@@ -57,13 +55,7 @@ object AQEShuffleReaderShims {
     // partitions is changed.
     outputPartitioning match {
       case h: HashPartitioning =>
-        val partitions = partitionSpecs.map {
-          case c: CoalescedPartitionSpec => CoalescedBoundary(c.start, c.end)
-          // Can not happend due to isCoalescedRead
-          case unexpected =>
-            throw SparkException.internalError(s"Unexpected ShufflePartitionSpec: $unexpected")
-        }
-        CurrentOrigin.withOrigin(h.origin)(CoalescedHashPartitioning(h, partitions))
+        CurrentOrigin.withOrigin(h.origin)(h.copy(numPartitions = partitionSpecs.length))
       case r: RangePartitioning =>
         CurrentOrigin.withOrigin(r.origin)(r.copy(numPartitions = partitionSpecs.length))
       // This can only happen for `REBALANCE_PARTITIONS_BY_NONE`, which uses
