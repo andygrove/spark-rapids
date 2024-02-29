@@ -18,13 +18,11 @@ package org.apache.spark.sql.rapids.execution
 import com.nvidia.spark.rapids.{CoalesceGoal, GpuExec, GpuMetric}
 import com.nvidia.spark.rapids.shims.{AQEShuffleReaderShims, ShimUnaryExecNode}
 
-import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
-import org.apache.spark.sql.catalyst.plans.physical.{CoalescedBoundary, CoalescedHashPartitioning, HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
-import org.apache.spark.sql.catalyst.trees.CurrentOrigin
-import org.apache.spark.sql.execution.{CoalescedMapperPartitionSpec, CoalescedPartitionSpec, PartialMapperPartitionSpec, PartialReducerPartitionSpec, ShufflePartitionSpec, SparkPlan}
+import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
+import org.apache.spark.sql.execution.{CoalescedPartitionSpec, PartialMapperPartitionSpec, PartialReducerPartitionSpec, ShufflePartitionSpec, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchangeLike}
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -84,7 +82,8 @@ case class GpuCustomShuffleReaderExec(
           throw new IllegalStateException("operating on canonicalization plan")
       }
     } else if (isCoalescedRead) {
-      AQEShuffleReaderShims.coalescedReadOutputPartitioning(child.outputPartitioning)
+      AQEShuffleReaderShims.coalescedReadOutputPartitioning(
+        partitionSpecs, child.outputPartitioning)
     } else {
       UnknownPartitioning(partitionSpecs.length)
     }
@@ -116,8 +115,7 @@ case class GpuCustomShuffleReaderExec(
     partitionSpecs.exists(_.isInstanceOf[PartialReducerPartitionSpec])
 
   def isLocalReader: Boolean =
-    partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec]) ||
-      partitionSpecs.exists(_.isInstanceOf[CoalescedMapperPartitionSpec])
+    AQEShuffleReaderShims.isLocalReader(partitionSpecs)
 
   def isCoalescedRead: Boolean = {
     partitionSpecs.sliding(2).forall {

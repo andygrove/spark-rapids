@@ -15,17 +15,24 @@
  */
 
 /*** spark-rapids-shim-json-lines
- {"spark": "311"}
- {"spark": "312"}
- {"spark": "313"}
- spark-rapids-shim-json-lines ***/
+{"spark": "311"}
+{"spark": "312"}
+{"spark": "313"}
+spark-rapids-shim-json-lines ***/
 package com.nvidia.spark.rapids.shims
 
+import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
+import org.apache.spark.sql.execution.{CoalescedPartitionSpec, PartialMapperPartitionSpec, ShufflePartitionSpec}
+
 object AQEShuffleReaderShims {
+
+  def isLocalReader(partitionSpecs: Seq[ShufflePartitionSpec]): Boolean =
+    partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec])
 
   def isCoalescedSpec(spec: ShufflePartitionSpec): Boolean = {
     spec.isInstanceOf[CoalescedPartitionSpec]
   }
+
   def coalescedReadOutputPartitioning(partitionSpecs: Seq[ShufflePartitionSpec],
       outputPartitioning: Partitioning): Partitioning = {
     UnknownPartitioning(partitionSpecs.length)
