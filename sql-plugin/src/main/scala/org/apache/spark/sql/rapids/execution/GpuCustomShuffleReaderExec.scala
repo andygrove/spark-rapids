@@ -81,9 +81,9 @@ case class GpuCustomShuffleReaderExec(
         case _ =>
           throw new IllegalStateException("operating on canonicalization plan")
       }
-    } else if (isCoalescedRead) {
-      AQEShuffleReaderShims.coalescedReadOutputPartitioning(
-        partitionSpecs, child.outputPartitioning)
+//    } else if (isCoalescedRead) {
+//      AQEShuffleReaderShims.coalescedReadOutputPartitioning(
+//        partitionSpecs, child.outputPartitioning)
     } else {
       UnknownPartitioning(partitionSpecs.length)
     }

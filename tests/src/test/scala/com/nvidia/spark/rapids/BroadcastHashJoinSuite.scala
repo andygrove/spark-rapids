@@ -19,10 +19,64 @@ package com.nvidia.spark.rapids
 import com.nvidia.spark.rapids.TestUtils.findOperator
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.functions.broadcast
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastHashJoinExec, GpuHashJoin}
 
 class BroadcastHashJoinSuite extends SparkQueryCompareTestSuite {
+
+  test("SPARK-45882: BroadcastHashJoinExec propagate partitioning should respect " +
+    "CoalescedHashPartitioning") {
+
+    val conf = new SparkConf()
+      .set("spark.sql.optimizer.canChangeCachedPlanOutputPartitioning", "true")
+
+    def doTest(spark: SparkSession): Unit = {
+
+      import spark.implicits._
+
+      val df = (1 to 100)
+        .map(i => (i, i.toString))
+        .toDF("key", "value")
+        .repartition(4)
+      df.createOrReplaceTempView("testData")
+
+      val df2 = Seq((1, 1), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2)) // Nil
+        .toDF("a", "b")
+        .repartition(2)
+      df2.createOrReplaceTempView("testData2")
+
+      val cached = spark.sql(
+        """
+          |select /*+ broadcast(testData) */ key, value, a
+          |from testData join (
+          | select a from testData2 group by a
+          |)tmp on key = a
+          |""".stripMargin).cache()
+
+      try {
+        // materialize aqe first to propagate output partitioning
+        cached.count()
+        val df = cached.groupBy("key").count()
+
+        val actual = df.collect().map(_.toString).sorted.mkString("\n")
+        assert(actual == "[1,1]\n[2,1]\n[3,1]")
+
+        // assert that there are no shuffles in the plan
+        TestUtils.findOperator(df.queryExecution.executedPlan, {
+          case _: ShuffleExchangeLike => true
+          case _ => false
+        }).isEmpty
+      } finally {
+        cached.unpersist()
+      }
+
+    }
+
+    withCpuSparkSession(doTest, conf)
+    withGpuSparkSession(doTest, conf)
+  }
 
   test("broadcast hint isn't propagated after a join") {
     val conf = new SparkConf()
